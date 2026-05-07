@@ -347,12 +347,13 @@ async def get_my_payment_invoice(
     status_label = "ОПЛАЧЕН" if status_norm in {"completed", "success", "paid"} else "ОЖИДАЕТ" if status_norm in {"pending", "processing"} else "ОТКЛОНЁН"
     provider = str(payment.payment_system or "").upper() or "—"
     user_label = identity.email or (f"tg · {identity.tg_id}" if identity.tg_id else identity.id)
-    payment_identifier = str(payment.payment_id or payment.id)
+    payment_identifier = str(payment.payment_id).strip() if payment.payment_id else ""
+    title_suffix = payment_identifier if payment_identifier else f"#{payment.id}"
     html = f"""<!DOCTYPE html>
 <html lang=\"ru\">
 <head>
   <meta charset=\"utf-8\" />
-  <title>Квитанция {_esc(payment_identifier)}</title>
+  <title>Квитанция {_esc(title_suffix)}</title>
   <style>
     @page {{ size: A4; margin: 18mm; }}
     body {{ font-family: 'JetBrains Mono', ui-monospace, monospace; color: #111; background: #fff; max-width: 720px; margin: 0 auto; padding: 24px; }}
@@ -371,7 +372,7 @@ async def get_my_payment_invoice(
 </head>
 <body>
   <button class=\"print-btn no-print\" onclick=\"window.print()\">Сохранить PDF</button>
-  <h1>Квитанция {_esc(payment_identifier)}</h1>
+  <h1>Квитанция {_esc(title_suffix)}</h1>
   <div class=\"sub\">// {_esc(created)}</div>
   <div class=\"amount\">{amount_value:,.2f} {_esc(currency)}</div>
   <span class=\"badge\">{_esc(status_label)}</span>
@@ -380,7 +381,7 @@ async def get_my_payment_invoice(
     <tr><td class=\"k\">Провайдер</td><td class=\"v\">{_esc(provider)}</td></tr>
     <tr><td class=\"k\">Дата</td><td class=\"v\">{_esc(created)}</td></tr>
     <tr><td class=\"k\">Получатель</td><td class=\"v\">{_esc(user_label)}</td></tr>
-    <tr><td class=\"k\">Идентификатор платежа</td><td class=\"v\" style=\"font-size:11px;color:#666\">{_esc(payment_identifier)}</td></tr>
+    <tr><td class=\"k\">Идентификатор платежа</td><td class=\"v\" style=\"font-size:11px;color:#666\">{_esc(payment_identifier) if payment_identifier else "—"}</td></tr>
   </table>
   <div class=\"footer\">Документ сгенерирован автоматически. Не требует подписи и печати.</div>
 </body>
