@@ -315,6 +315,7 @@ async def create_identity_with_token(
     identity = await create_identity(session, email=email, tg_id=tg_id)
     if password:
         identity.password_hash = await run_cpu(hash_password, password)
+        await session.flush()
         await session.refresh(identity)
     token = await issue_token_for_identity(session, identity, request=request)
     return identity, token
@@ -357,6 +358,7 @@ async def set_initial_password(
     if not identity or identity.password_hash:
         return None
     identity.password_hash = await run_cpu(hash_password, password)
+    await session.flush()
     await session.refresh(identity)
     return identity
 
@@ -370,6 +372,7 @@ async def set_password_for_identity(
     if not identity:
         return None
     identity.password_hash = await run_cpu(hash_password, new_password)
+    await session.flush()
     await session.refresh(identity)
     return identity
 
@@ -389,6 +392,7 @@ async def change_identity_password(
     if not await run_cpu(check_password, current_password, identity.password_hash):
         return "wrong_password"
     identity.password_hash = await run_cpu(hash_password, new_password)
+    await session.flush()
     await session.refresh(identity)
     return None
 
@@ -645,6 +649,7 @@ async def attach_email(session: AsyncSession, identity_id: str, email: str) -> I
         await session.execute(delete(Identity).where(Identity.id == existing.id))
 
     identity.email = email_clean
+    await session.flush()
     await session.refresh(identity)
     return identity
 
@@ -680,6 +685,7 @@ async def attach_telegram(session: AsyncSession, identity_id: str, tg_id: int) -
     if admin_row.scalar_one_or_none():
         identity.is_admin = True
     await session.execute(User.__table__.update().where(User.tg_id == tg_id).values(identity_id=identity_id))
+    await session.flush()
     await session.refresh(identity)
     return identity
 
@@ -699,6 +705,7 @@ async def detach_email(session: AsyncSession, identity_id: str) -> Identity | No
     identity.email = None
     identity.email_verified = False
     identity.password_hash = None
+    await session.flush()
     await session.refresh(identity)
     return identity
 
@@ -716,6 +723,7 @@ async def detach_telegram(session: AsyncSession, identity_id: str) -> Identity |
     identity.tg_id = None
     identity.is_admin = False
     await session.execute(update(User).where(User.identity_id == identity_id, User.tg_id == old_tg).values(tg_id=None))
+    await session.flush()
     await session.refresh(identity)
     return identity
 
