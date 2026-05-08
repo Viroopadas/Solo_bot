@@ -129,18 +129,18 @@ async def wata_webhook(request: web.Request):
         rub_amount: float = 0.0
         cassa_name: str | None = None
 
+        fb_tg_id, fb_rub = _parse_wata_order_id(order_id)
+        if fb_tg_id is not None:
+            tg_id = fb_tg_id
+
         if pending:
             try:
-                tg_id = int(pending["tg_id"])
                 rub_amount = float(pending["amount"])
             except (TypeError, ValueError, KeyError):
                 pass
             meta = pending.get("metadata") or {}
             cassa_name = meta.get("cassa") if isinstance(meta, dict) else None
         else:
-            fb_tg_id, fb_rub = _parse_wata_order_id(order_id)
-            if fb_tg_id is not None:
-                tg_id = fb_tg_id
             if fb_rub and fb_rub > 0:
                 rub_amount = fb_rub
 
