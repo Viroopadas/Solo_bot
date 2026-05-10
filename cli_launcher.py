@@ -713,6 +713,7 @@ def _build_update_rsync_excludes(update_buttons: bool, update_img: bool, update_
     if not update_redis_cache:
         excludes.append("--exclude=core/redis_cache.py")
     excludes.append("--exclude=modules")
+    excludes.append("--exclude=static/web_uploads")
     return excludes
 
 
@@ -902,9 +903,15 @@ def clean_project_dir_safe(update_buttons=False, update_img=False, update_redis_
         os.path.join(PROJECT_DIR, "handlers", "texts.py"),
         os.path.join(PROJECT_DIR, ".git"),
         os.path.join(PROJECT_DIR, "modules"),
+        os.path.join(PROJECT_DIR, "static"),
+        os.path.join(PROJECT_DIR, "static", "web_uploads"),
     ])
 
     for root, dirs, files in os.walk(os.path.join(PROJECT_DIR, "modules")):
+        for name in dirs + files:
+            preserved_paths.add(os.path.join(root, name))
+
+    for root, dirs, files in os.walk(os.path.join(PROJECT_DIR, "static", "web_uploads")):
         for name in dirs + files:
             preserved_paths.add(os.path.join(root, name))
 
@@ -939,10 +946,15 @@ def clean_project_dir_safe(update_buttons=False, update_img=False, update_redis_
                 os.path.join(PROJECT_DIR, "handlers"),
                 os.path.join(PROJECT_DIR, "img"),
                 os.path.join(PROJECT_DIR, "modules"),
+                os.path.join(PROJECT_DIR, "static"),
+                os.path.join(PROJECT_DIR, "static", "web_uploads"),
             ]:
                 continue
 
             if os.path.abspath(dir_path).startswith(os.path.join(PROJECT_DIR, "modules") + os.sep):
+                continue
+
+            if os.path.abspath(dir_path).startswith(os.path.join(PROJECT_DIR, "static", "web_uploads") + os.sep):
                 continue
 
             try:
