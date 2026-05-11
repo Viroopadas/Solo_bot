@@ -752,6 +752,10 @@ async def handle_sync_cluster(
                             if inbound_ids:
                                 payload["activeInternalSquads"] = inbound_ids
 
+                            stored_link = key.get("remnawave_link")
+                            if stored_link and "/" in stored_link:
+                                payload["shortUuid"] = stored_link.rstrip("/").split("/")[-1]
+
                             r = await remna._request("POST", "/users", json=payload)
                             if r.status_code not in (200, 201):
                                 stats["failed"] += 1
@@ -835,6 +839,7 @@ async def handle_sync_cluster(
                             plan=item["tariff"],
                         )
                         bulk_updates.append({
+                            "user_id": key["user_id"],
                             "client_id": key["client_id"],
                             "remnawave_link": item["new_link"],
                             "key": key_value,
@@ -856,7 +861,10 @@ async def handle_sync_cluster(
                             try:
                                 await session.execute(
                                     update(Key)
-                                    .where(Key.client_id == upd["client_id"])
+                                    .where(
+                                        Key.user_id == upd["user_id"],
+                                        Key.client_id == upd["client_id"],
+                                    )
                                     .values(
                                         remnawave_link=upd["remnawave_link"], key=upd["key"]
                                     )
