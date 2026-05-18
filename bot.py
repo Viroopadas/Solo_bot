@@ -22,17 +22,21 @@ apply_button_icons_patch()
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
 RedisStorage = import_module("aiogram.fsm.storage.redis").RedisStorage
-redis_from_url = import_module("redis.asyncio").from_url
-redis = redis_from_url(
+_redis_asyncio = import_module("redis.asyncio")
+_BlockingConnectionPool = import_module("redis.asyncio.connection").BlockingConnectionPool
+
+_redis_pool = _BlockingConnectionPool.from_url(
     REDIS_URL,
     encoding="utf-8",
     decode_responses=True,
-    max_connections=64,
+    max_connections=128,
+    timeout=20,
     health_check_interval=30,
     socket_connect_timeout=5,
     socket_timeout=5,
     retry_on_timeout=True,
 )
+redis = _redis_asyncio.Redis(connection_pool=_redis_pool)
 storage = RedisStorage(redis=redis)
 
 dp = Dispatcher(bot=bot, storage=storage)
