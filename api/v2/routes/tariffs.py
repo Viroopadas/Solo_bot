@@ -24,7 +24,7 @@ from database import (
     identities as idb,
 )
 from database.coupons import mark_coupon_used
-from database.models import Tariff
+from database.models import Server, Tariff
 from database.tariffs import get_tariff_by_id
 from database.temporary_data import create_temporary_data
 from logger import logger
@@ -158,6 +158,13 @@ async def get_tariffs_public(
             raise HTTPException(status_code=422, detail="Некорректный параметр tariff_ids")
     elif group_code:
         q = q.where(Tariff.group_code == group_code)
+    else:
+        allowed_groups_subq = (
+            select(Server.tariff_group)
+            .where(Server.enabled.is_(True), Server.tariff_group.isnot(None))
+            .distinct()
+        )
+        q = q.where(Tariff.group_code.in_(allowed_groups_subq))
     if filter_vless == "router":
         q = q.where(Tariff.vless.is_(True))
     elif filter_vless == "app":
@@ -197,6 +204,16 @@ async def purchase_tariff_with_balance(
     tg_id = await idb.ensure_billing_user_for_identity(session, identity)
     tariff = await get_tariff_by_id(session, body.tariff_id)
     if not tariff or not tariff.get("is_active", True):
+        raise HTTPException(status_code=404, detail="Тариф не найден")
+    tariff_group_code = (tariff.get("group_code") or "").strip()
+    if not tariff_group_code:
+        raise HTTPException(status_code=404, detail="Тариф не найден")
+    tariff_is_purchasable = await session.scalar(
+        select(Server.id)
+        .where(Server.tariff_group == tariff_group_code, Server.enabled.is_(True))
+        .limit(1)
+    )
+    if not tariff_is_purchasable:
         raise HTTPException(status_code=404, detail="Тариф не найден")
     price = int(calculate_config_price(tariff, body.selected_device_limit, body.selected_traffic_gb))
     if price <= 0:
