@@ -82,6 +82,7 @@ class AccountKeyActionResponse(BaseModel):
 
 
 class AccountKeyRenewRequest(BaseModel):
+    tariff_id: int | None = None
     provider_id: str | None = None
     success_url: str | None = None
     failure_url: str | None = None
@@ -101,6 +102,8 @@ class AccountKeyRenewResponse(AccountKeyActionResponse):
     required_amount_rub: int = 0
     payment_id: str | None = None
     payment_url: str | None = None
+    requires_tariff_selection: bool = False
+    available_tariff_group: str | None = None
 
 
 class AccountKeyResetHwidResponse(AccountKeyActionResponse):

@@ -55,12 +55,47 @@ async def user_key_renew(
     key_email = str(getattr(db_key, "email", "") or "")
     key_server_id = str(getattr(db_key, "server_id", "") or "")
 
+    forbidden_renewal_groups = {"trial", "gifts", "discounts", "discounts_max"}
+    server_tariff_group_row = await session.execute(
+        select(Server.tariff_group)
+        .where((Server.server_name == key_server_id) | (Server.cluster_name == key_server_id))
+        .limit(1)
+    )
+    server_tariff_group = (server_tariff_group_row.scalar() or "").strip()
+
+    if body.tariff_id:
+        chosen_tariff = await get_tariff_by_id(session, int(body.tariff_id))
+        chosen_group_code = (chosen_tariff.get("group_code") or "").strip() if chosen_tariff else ""
+        if (
+            not chosen_tariff
+            or not chosen_tariff.get("is_active", True)
+            or not chosen_group_code
+            or chosen_group_code in forbidden_renewal_groups
+            or (server_tariff_group and chosen_group_code != server_tariff_group)
+        ):
+            raise HTTPException(status_code=400, detail="Тариф недоступен для продления")
+        effective_tariff_id = int(body.tariff_id)
+    else:
+        key_tariff = await get_tariff_by_id(session, int(tariff_id))
+        key_tariff_group = (key_tariff.get("group_code") or "").strip() if key_tariff else ""
+        if not key_tariff_group or key_tariff_group in forbidden_renewal_groups:
+            return AccountKeyRenewResponse(
+                ok=True,
+                message="Для продления выберите тариф",
+                client_id=str(client_id),
+                tariff_id=0,
+                requires_tariff_selection=True,
+                available_tariff_group=server_tariff_group or None,
+                payment_required=False,
+            )
+        effective_tariff_id = int(tariff_id)
+
     try:
         pricing = await calculate_renewal_pricing(
             session=session,
             billing_user_id=int(billing_user_id),
             key_email=key_email,
-            tariff_id=int(tariff_id),
+            tariff_id=effective_tariff_id,
             coupon_code=body.coupon_code,
         )
     except ServiceError as e:
@@ -71,7 +106,7 @@ async def user_key_renew(
             ok=True,
             message="Расчет обновлен",
             client_id=str(client_id),
-            tariff_id=int(tariff_id),
+            tariff_id=effective_tariff_id,
             charged_rub=0,
             balance_rub=pricing.balance,
             base_price_rub=pricing.base_price_rub,
@@ -99,7 +134,7 @@ async def user_key_renew(
             failure_url=failure_url,
             metadata={
                 "payment_flow": "key_renewal",
-                "tariff_id": int(tariff_id),
+                "tariff_id": effective_tariff_id,
                 "client_id": str(client_id),
                 "email": key_email,
                 "cost": pricing.final_price_rub,
@@ -122,7 +157,7 @@ async def user_key_renew(
             int(billing_user_id),
             "waiting_for_renewal_payment",
             {
-                "tariff_id": int(tariff_id),
+                "tariff_id": effective_tariff_id,
                 "client_id": str(client_id),
                 "email": key_email,
                 "cost": pricing.final_price_rub,
@@ -142,7 +177,7 @@ async def user_key_renew(
             ok=True,
             message="Требуется оплата для продления подписки",
             client_id=str(client_id),
-            tariff_id=int(tariff_id),
+            tariff_id=effective_tariff_id,
             charged_rub=0,
             balance_rub=pricing.balance,
             base_price_rub=pricing.base_price_rub,
@@ -167,7 +202,7 @@ async def user_key_renew(
             client_id=str(client_id),
             key_email=key_email,
             key_server_id=key_server_id,
-            tariff_id=int(tariff_id),
+            tariff_id=effective_tariff_id,
             new_expiry_time=new_expiry_time,
             total_gb=pricing.total_gb,
             cost=float(pricing.final_price_rub),
