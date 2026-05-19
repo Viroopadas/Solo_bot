@@ -81,7 +81,7 @@ async def process_inactive_trial(
         logger.info(f"[InactiveTrial] {len(users_to_extend)} пользователей с расширенным триалом")
 
     if messages:
-        results = await send_messages_with_limit(bot, messages, messages_per_second=25)
+        results = await send_messages_with_limit(bot, messages)
 
         sent_tg_ids = [msg["tg_id"] for msg, result in zip(messages, results, strict=False) if result]
 

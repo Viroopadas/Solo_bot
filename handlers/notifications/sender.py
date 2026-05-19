@@ -60,7 +60,7 @@ def _find_photo_file(photo_path: str) -> str | None:
 
 
 class NotificationRateLimiter:
-    def __init__(self, max_rate: int = 35, window: float = 1.0) -> None:
+    def __init__(self, max_rate: int = 25, window: float = 1.0) -> None:
         self.max_rate = max_rate
         self.window = window
         self.send_times: deque = deque()
@@ -177,7 +177,7 @@ _NOTIFY_MAX_RETRY_AFTER = 120.0
 
 
 class FastNotificationSender:
-    def __init__(self, bot: Bot, messages_per_second: int = 35, max_attempts: int = _NOTIFY_MAX_ATTEMPTS) -> None:
+    def __init__(self, bot: Bot, messages_per_second: int = 25, max_attempts: int = _NOTIFY_MAX_ATTEMPTS) -> None:
         self.bot = bot
         self.rate_limiter = NotificationRateLimiter(max_rate=messages_per_second)
         self.max_attempts = max_attempts
@@ -349,7 +349,7 @@ class FastNotificationSender:
 async def send_messages_with_limit(
     bot: Bot,
     messages: list[dict],
-    messages_per_second: int = 35,
+    messages_per_second: int = 25,
 ) -> list[bool]:
     sender = FastNotificationSender(bot, messages_per_second)
     return await sender.send_all(messages)

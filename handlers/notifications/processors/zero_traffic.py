@@ -135,6 +135,6 @@ async def process_zero_traffic(
             logger.error(f"[ZeroTraffic] Ошибка обновления notified: {e}")
 
     if messages:
-        results = await send_messages_with_limit(bot, messages, messages_per_second=25)
+        results = await send_messages_with_limit(bot, messages)
         sent_count = sum(1 for r in results if r)
         logger.info(f"[ZeroTraffic] Отправлено {sent_count} уведомлений")

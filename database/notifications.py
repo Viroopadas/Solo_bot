@@ -14,6 +14,7 @@ from logger import logger
 
 _NOTIFICATION_TIME_BATCH_SIZE = 300
 _BULK_ADD_NOTIFICATIONS_BATCH_SIZE = 1000
+_LEGACY_REF_MAP_BATCH_SIZE = 5000
 
 
 def _utc_now() -> datetime:
@@ -34,12 +35,16 @@ async def _map_legacy_refs_to_user_ids(session: AsyncSession, refs: list[int]) -
     from sqlalchemy import or_
 
     uniq = list(dict.fromkeys(refs))
-    r = await session.execute(select(User.id, User.tg_id).where(or_(User.tg_id.in_(uniq), User.id.in_(uniq))))
     m: dict[int, int] = {}
-    for uid, tgid in r.all():
-        m[int(uid)] = int(uid)
-        if tgid is not None:
-            m[int(tgid)] = int(uid)
+    for i in range(0, len(uniq), _LEGACY_REF_MAP_BATCH_SIZE):
+        chunk = uniq[i : i + _LEGACY_REF_MAP_BATCH_SIZE]
+        r = await session.execute(
+            select(User.id, User.tg_id).where(or_(User.tg_id.in_(chunk), User.id.in_(chunk)))
+        )
+        for uid, tgid in r.all():
+            m[int(uid)] = int(uid)
+            if tgid is not None:
+                m[int(tgid)] = int(uid)
     return {ref: m[ref] for ref in uniq if ref in m}
 
 
