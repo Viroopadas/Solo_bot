@@ -25,6 +25,7 @@ from .heleket import router as heleket_router
 from .kassai import router as kassai_router
 from .paritypay import router as paritypay_router
 from .pay import router as pay_router
+from .platega import router as platega_router
 from .robokassa import router as robokassa_router
 from .stars import router as stars_router
 from .tribute import router as tribute_router
@@ -57,6 +58,13 @@ if PROVIDERS.get("WATA_RU", {}).get("enabled") or PROVIDERS.get("WATA_INT", {}).
     router.include_router(wata_router)
 if PROVIDERS.get("PARITYPAY_SBP", {}).get("enabled"):
     router.include_router(paritypay_router)
+if (
+    PROVIDERS.get("PLATEGA_SBP", {}).get("enabled")
+    or PROVIDERS.get("PLATEGA_CARDS", {}).get("enabled")
+    or PROVIDERS.get("PLATEGA_INT", {}).get("enabled")
+    or PROVIDERS.get("PLATEGA_CRYPTO", {}).get("enabled")
+):
+    router.include_router(platega_router)
 
 router.include_router(tribute_router)
 router.include_router(gift_router)
