@@ -36,6 +36,7 @@ NOTIFICATION_TIME_FIELDS: Final[dict[str, str]] = {
     "INACTIVE_TRAFFIC_ENABLED": "Трафик неакт. (ч)",
     "HOT_LEADS_INTERVAL_HOURS": "Гор.лиды (ч)",
     "DISCOUNT_ACTIVE_HOURS": "Скидка (ч)",
+    "RENEW_BUTTON_BEFORE_DAYS": "Кнопка продл. за (дн)",
 }
 
 PAYMENT_PROVIDER_TITLES: Final[dict[str, str]] = {

@@ -98,8 +98,9 @@ async def process_callback_renew_key(callback_query: CallbackQuery, state: FSMCo
         server_id = record["server_id"]
         tariff_id = record.get("tariff_id")
 
+        renew_before_days = int(NOTIFICATIONS_CONFIG.get("RENEW_BUTTON_BEFORE_DAYS", RENEW_BUTTON_BEFORE_DAYS))
         expiry_utc = datetime.utcfromtimestamp(expiry_time / 1000).replace(tzinfo=pytz.UTC)
-        available_from_utc = expiry_utc - timedelta(days=RENEW_BUTTON_BEFORE_DAYS)
+        available_from_utc = expiry_utc - timedelta(days=renew_before_days)
         now_utc = datetime.now(timezone.utc)
 
         if now_utc < available_from_utc:

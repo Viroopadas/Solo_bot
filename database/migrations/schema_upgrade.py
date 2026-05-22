@@ -145,6 +145,8 @@ async def _add_constraint_if_missing(conn: AsyncConnection, table: str, name: st
 
 
 async def _drop_fkeys_to_users(conn: AsyncConnection) -> None:
+    if not await _table_exists(conn, "users"):
+        return
     r = await conn.execute(
         text(
             """
@@ -1347,6 +1349,16 @@ async def _migration_v29_add_scheduled_broadcasts_channel(conn: AsyncConnection)
         )
 
 
+async def _migration_v30_add_users_created_at_index(conn: AsyncConnection) -> None:
+    logger.info("[schema_upgrade] v30: индекс users(created_at)")
+    if not await _table_exists(conn, "users"):
+        return
+    if not await _column_exists(conn, "users", "created_at"):
+        return
+    if not await _index_exists(conn, "users", "ix_users_created_at"):
+        await _exec_ignore(conn, "CREATE INDEX IF NOT EXISTS ix_users_created_at ON users (created_at)")
+
+
 _MIGRATIONS = [
     (1, "Добавление users.id", _migration_v1_add_users_id),
     (2, "Добавление user_id колонок", _migration_v2_add_user_id_columns),
@@ -1377,6 +1389,7 @@ _MIGRATIONS = [
     (27, "admins.permissions (JSONB per-admin permissions)", _migration_v27_add_admins_permissions),
     (28, "таблица identity_notif_prefs (toggle каналов)", _migration_v28_add_identity_notif_prefs),
     (29, "scheduled_broadcasts.channel (bot/site/both)", _migration_v29_add_scheduled_broadcasts_channel),
+    (30, "индекс users(created_at)", _migration_v30_add_users_created_at_index),
 ]
 
 
