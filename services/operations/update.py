@@ -181,7 +181,6 @@ async def update_key_on_cluster(
                 total_gb=total_gb_bytes,
                 expiry_time=expiry_time,
                 enable=True,
-                flow="xtls-rprx-vision",
                 inbound_id=int(inbound_id),
                 sub_id=sub_id,
             )

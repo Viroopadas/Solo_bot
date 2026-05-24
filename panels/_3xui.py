@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 import py3xui
 
-from py3xui import AsyncApi
+from py3xui import AsyncApi, Inbound
 
 from config import ADMIN_PASSWORD, ADMIN_USERNAME, SUPERNODE, USE_XUI_TOKEN, XUI_TOKEN
 from logger import logger
@@ -23,13 +23,40 @@ class ClientConfig:
     total_gb: int
     expiry_time: int
     enable: bool
-    flow: str
     inbound_id: int
     sub_id: str
 
 
 _xui_instance_cache: dict[str, tuple[AsyncApi, float]] = {}
 SESSION_TTL = 1800
+
+
+_inbound_cache: dict[str, tuple[Inbound, float]] = {}
+INBOUND_CACHE_TTL = SESSION_TTL
+
+
+def _resolve_flow(inbound: Inbound) -> str:
+    """VLESS flow по stream_settings: vision только для (reality|tls)+tcp, иначе пусто."""
+    ss = getattr(inbound, "stream_settings", None)
+    if not ss or isinstance(ss, str):
+        return ""
+    security = (getattr(ss, "security", "") or "").lower()
+    network = (getattr(ss, "network", "") or "").lower()
+    if security in ("reality", "tls") and network == "tcp":
+        return "xtls-rprx-vision"
+    return ""
+
+
+async def _get_inbound_cached(xui: AsyncApi, inbound_id: int) -> Inbound:
+    """Inbound с TTL-кэшем по ключу (xui, inbound_id)."""
+    key = f"{id(xui)}|{inbound_id}"
+    now = time.time()
+    cached = _inbound_cache.get(key)
+    if cached and (now - cached[1] < INBOUND_CACHE_TTL):
+        return cached[0]
+    inbound = await xui.inbound.get_by_id(int(inbound_id))
+    _inbound_cache[key] = (inbound, now)
+    return inbound
 
 
 async def get_xui_instance(api_url: str) -> AsyncApi:
@@ -61,6 +88,9 @@ async def get_xui_instance(api_url: str) -> AsyncApi:
 
 async def add_client(xui: py3xui.AsyncApi, config: ClientConfig) -> dict[str, Any]:
     try:
+        inbound = await _get_inbound_cached(xui, config.inbound_id)
+        flow = _resolve_flow(inbound)
+
         client = py3xui.Client(
             id=config.client_id,
             email=config.email.lower(),
@@ -70,11 +100,11 @@ async def add_client(xui: py3xui.AsyncApi, config: ClientConfig) -> dict[str, An
             enable=config.enable,
             tg_id=config.tg_id,
             sub_id=config.sub_id,
-            flow=config.flow,
+            flow=flow,
         )
 
         response = await xui.client.add(config.inbound_id, [client])
-        logger.info(f"Клиент {config.email} успешно добавлен с ID {config.client_id}")
+        logger.info(f"Клиент {config.email} успешно добавлен с ID {config.client_id} (flow={flow!r})")
         return response if response else {"status": "failed"}
 
     except httpx.ConnectTimeout as e:
@@ -110,9 +140,12 @@ async def extend_client_key(
 
         logger.info(f"Обновление ключа клиента {email} с ID {client.id} до {new_expiry_time}")
 
+        inbound = await _get_inbound_cached(xui, inbound_id)
+        flow = _resolve_flow(inbound)
+
         client.id = client_id
         client.expiry_time = new_expiry_time
-        client.flow = "xtls-rprx-vision"
+        client.flow = flow
         client.sub_id = sub_id
         client.total_gb = total_gb
         client.enable = True
@@ -122,7 +155,7 @@ async def extend_client_key(
 
         await xui.client.update(client.id, client)
         await xui.client.reset_stats(inbound_id, email)
-        logger.info(f"Ключ клиента {email} успешно продлён до {new_expiry_time}")
+        logger.info(f"Ключ клиента {email} успешно продлён до {new_expiry_time} (flow={flow!r})")
         return True
 
     except httpx.ConnectTimeout as e:
@@ -197,16 +230,19 @@ async def toggle_client(
             logger.warning(f"Клиент с email {email} и ID {client_id} не найден.")
             return False
 
+        inbound = await _get_inbound_cached(xui, inbound_id)
+        flow = _resolve_flow(inbound)
+
         client.sub_id = email
         client.enable = enable
         client.id = client_id
-        client.flow = "xtls-rprx-vision"
+        client.flow = flow
         client.limit_ip = 0
         client.inbound_id = inbound_id
 
         await xui.client.update(client.id, client)
         status = "включен" if enable else "отключен"
-        logger.info(f"Клиент с email {email} и ID {client_id} успешно {status}.")
+        logger.info(f"Клиент с email {email} и ID {client_id} успешно {status} (flow={flow!r}).")
         return True
 
     except httpx.ConnectTimeout as e:
