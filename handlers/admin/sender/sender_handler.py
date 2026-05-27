@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import API_TOKEN
 from core.executor import run_io, should_run_heavy_tasks_separately
-from database import save_blocked_user_ids
+from database import async_session_maker, save_blocked_user_ids
+from middlewares.session import release_session_early
 from database.models import Server
 from database.scheduled_broadcasts import (
     cancel_scheduled_broadcast,
@@ -388,6 +389,8 @@ async def handle_broadcast_confirm(callback_query: CallbackQuery, state: FSMCont
     bot = callback_query.bot
     state_keyboard_data = data.get("keyboard")
 
+    await release_session_early(session)
+
     if should_run_heavy_tasks_separately():
         main_loop = asyncio.get_running_loop()
 
@@ -420,11 +423,6 @@ async def handle_broadcast_confirm(callback_query: CallbackQuery, state: FSMCont
             progress_cb,
             channel,
         )
-        if stats.get("blocked_user_ids"):
-            try:
-                await save_blocked_user_ids(session, stats["blocked_user_ids"])
-            except Exception as e:
-                logger.error(f"❌ Ошибка при сохранении заблокированных пользователей: {e}")
     else:
         messages = []
         for tg_id in tg_ids:
@@ -443,7 +441,7 @@ async def handle_broadcast_confirm(callback_query: CallbackQuery, state: FSMCont
                 if "message is not modified" not in str(e).lower():
                     logger.debug(f"[Sender] Обновление прогресса: {e}")
 
-        broadcast_service = BroadcastService(bot=bot, session=session)
+        broadcast_service = BroadcastService(bot=bot, session=None)
         stats = await broadcast_service.broadcast(
             messages,
             workers=5,
@@ -452,6 +450,15 @@ async def handle_broadcast_confirm(callback_query: CallbackQuery, state: FSMCont
             progress_every=200,
             channel=channel,
         )
+
+    blocked_ids = stats.get("blocked_user_ids")
+    if blocked_ids:
+        try:
+            async with async_session_maker() as db_session:
+                await save_blocked_user_ids(db_session, blocked_ids)
+                await db_session.commit()
+        except Exception as e:
+            logger.error(f"❌ Ошибка при сохранении заблокированных пользователей: {e}")
 
     await callback_query.message.answer(
         text=_broadcast_result_text(total_users, stats),
@@ -725,6 +732,7 @@ async def handle_scheduled_broadcast_send_now(
         )
         return
     await callback_query.message.edit_text("⏳ Запускаю рассылку...")
+    await release_session_early(session)
     try:
         result = await execute_scheduled_broadcast(item, bot=callback_query.bot)
     except Exception as exc:

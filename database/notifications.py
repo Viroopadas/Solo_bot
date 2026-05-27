@@ -123,8 +123,12 @@ async def bulk_add_notifications(
     if not mapped:
         return
     uids = list({uid for uid, _ in mapped})
-    tg_map_r = await session.execute(select(User.id, User.tg_id).where(User.id.in_(uids)))
-    tg_by_uid = {int(r.id): r.tg_id for r in tg_map_r.all()}
+    tg_by_uid: dict[int, int | None] = {}
+    for i in range(0, len(uids), _LEGACY_REF_MAP_BATCH_SIZE):
+        chunk = uids[i : i + _LEGACY_REF_MAP_BATCH_SIZE]
+        tg_map_r = await session.execute(select(User.id, User.tg_id).where(User.id.in_(chunk)))
+        for row in tg_map_r.all():
+            tg_by_uid[int(row.id)] = row.tg_id
     now = _utc_now()
     total = 0
     for i in range(0, len(mapped), _BULK_ADD_NOTIFICATIONS_BATCH_SIZE):

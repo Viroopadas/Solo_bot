@@ -682,59 +682,95 @@ async def _migration_v6_add_foreign_keys(conn: AsyncConnection) -> None:
         )
 
 
-async def _migration_v7_backfill_tg_mirrors(conn: AsyncConnection) -> None:
-    logger.info("[schema_upgrade] v7: Backfill tg_id mirrors")
-
+async def _run_tg_mirror_backfill(conn: AsyncConnection, *, nulls_only: bool) -> None:
+    null_filter = " AND k.tg_id IS NULL" if nulls_only else ""
     backfills = [
-        "UPDATE keys k SET tg_id = u.tg_id FROM users u WHERE k.user_id = u.id",
-        "UPDATE payments p SET tg_id = u.tg_id FROM users u WHERE p.user_id = u.id",
-        "UPDATE referrals r SET referred_tg_id = ur.tg_id, referrer_tg_id = ux.tg_id FROM users ur, users ux WHERE r.referred_user_id = ur.id AND r.referrer_user_id = ux.id",
-        "UPDATE notifications n SET tg_id = u.tg_id FROM users u WHERE n.user_id = u.id",
-        "UPDATE gift_usages gu SET tg_id = u.tg_id FROM users u WHERE gu.user_id = u.id",
-        "UPDATE manual_bans m SET tg_id = u.tg_id FROM users u WHERE m.user_id = u.id",
-        "UPDATE temporary_data t SET tg_id = u.tg_id FROM users u WHERE t.user_id = u.id",
-        "UPDATE blocked_users b SET tg_id = u.tg_id FROM users u WHERE b.user_id = u.id",
-        "UPDATE scheduled_broadcasts s SET created_by_tg_id = u.tg_id FROM users u WHERE s.created_by_user_id = u.id",
-        "UPDATE coupon_usages c SET tg_id = u.tg_id FROM users u WHERE c.user_id = u.id",
+        (
+            "keys",
+            f"UPDATE keys k SET tg_id = u.tg_id FROM users u WHERE k.user_id = u.id{null_filter}",
+        ),
+        (
+            "payments",
+            f"UPDATE payments p SET tg_id = u.tg_id FROM users u "
+            f"WHERE p.user_id = u.id{' AND p.tg_id IS NULL' if nulls_only else ''}",
+        ),
+        (
+            "referrals",
+            "UPDATE referrals r SET referred_tg_id = ur.tg_id, referrer_tg_id = ux.tg_id "
+            "FROM users ur, users ux "
+            "WHERE r.referred_user_id = ur.id AND r.referrer_user_id = ux.id"
+            + (" AND (r.referred_tg_id IS NULL OR r.referrer_tg_id IS NULL)" if nulls_only else ""),
+        ),
+        (
+            "notifications",
+            f"UPDATE notifications n SET tg_id = u.tg_id FROM users u "
+            f"WHERE n.user_id = u.id{' AND n.tg_id IS NULL' if nulls_only else ''}",
+        ),
+        (
+            "gift_usages",
+            f"UPDATE gift_usages gu SET tg_id = u.tg_id FROM users u "
+            f"WHERE gu.user_id = u.id{' AND gu.tg_id IS NULL' if nulls_only else ''}",
+        ),
+        (
+            "manual_bans",
+            f"UPDATE manual_bans m SET tg_id = u.tg_id FROM users u "
+            f"WHERE m.user_id = u.id{' AND m.tg_id IS NULL' if nulls_only else ''}",
+        ),
+        (
+            "temporary_data",
+            f"UPDATE temporary_data t SET tg_id = u.tg_id FROM users u "
+            f"WHERE t.user_id = u.id{' AND t.tg_id IS NULL' if nulls_only else ''}",
+        ),
+        (
+            "blocked_users",
+            f"UPDATE blocked_users b SET tg_id = u.tg_id FROM users u "
+            f"WHERE b.user_id = u.id{' AND b.tg_id IS NULL' if nulls_only else ''}",
+        ),
+        (
+            "scheduled_broadcasts",
+            "UPDATE scheduled_broadcasts s SET created_by_tg_id = u.tg_id FROM users u "
+            "WHERE s.created_by_user_id = u.id"
+            + (" AND s.created_by_tg_id IS NULL" if nulls_only else ""),
+        ),
+        (
+            "coupon_usages",
+            f"UPDATE coupon_usages c SET tg_id = u.tg_id FROM users u "
+            f"WHERE c.user_id = u.id{' AND c.tg_id IS NULL' if nulls_only else ''}",
+        ),
     ]
 
-    for sql in backfills:
-        try:
-            async with conn.begin_nested():
-                await conn.execute(text(sql))
-        except Exception as e:
-            logger.debug(f"[schema_upgrade] backfill skip: {e}")
+    for table, sql in backfills:
+        if await _table_exists(conn, table):
+            await conn.execute(text(sql))
 
     if await _table_exists(conn, "gifts"):
-        try:
-            async with conn.begin_nested():
-                await conn.execute(
-                    text(
-                        """
-                        UPDATE gifts g
-                        SET sender_tg_id = u.tg_id
-                        FROM users u
-                        WHERE g.sender_user_id = u.id
-                        """
-                    )
-                )
-        except Exception as e:
-            logger.debug(f"[schema_upgrade] backfill gifts sender skip: {e}")
+        sender_null = " AND g.sender_tg_id IS NULL" if nulls_only else ""
+        recipient_null = " AND g.recipient_tg_id IS NULL" if nulls_only else ""
+        await conn.execute(
+            text(
+                f"""
+                UPDATE gifts g
+                SET sender_tg_id = u.tg_id
+                FROM users u
+                WHERE g.sender_user_id = u.id{sender_null}
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                f"""
+                UPDATE gifts g
+                SET recipient_tg_id = u.tg_id
+                FROM users u
+                WHERE g.recipient_user_id = u.id{recipient_null}
+                """
+            )
+        )
 
-        try:
-            async with conn.begin_nested():
-                await conn.execute(
-                    text(
-                        """
-                        UPDATE gifts g
-                        SET recipient_tg_id = u.tg_id
-                        FROM users u
-                        WHERE g.recipient_user_id = u.id
-                        """
-                    )
-                )
-        except Exception as e:
-            logger.debug(f"[schema_upgrade] backfill gifts recipient skip: {e}")
+
+async def _migration_v7_backfill_tg_mirrors(conn: AsyncConnection) -> None:
+    logger.info("[schema_upgrade] v7: Backfill tg_id mirrors")
+    await _run_tg_mirror_backfill(conn, nulls_only=False)
 
 
 async def _migration_v8_fix_notification_timezone(conn: AsyncConnection) -> None:
@@ -1359,6 +1395,11 @@ async def _migration_v30_add_users_created_at_index(conn: AsyncConnection) -> No
         await _exec_ignore(conn, "CREATE INDEX IF NOT EXISTS ix_users_created_at ON users (created_at)")
 
 
+async def _migration_v31_repair_tg_mirror_nulls(conn: AsyncConnection) -> None:
+    logger.info("[schema_upgrade] v31: Repair NULL tg_id mirrors")
+    await _run_tg_mirror_backfill(conn, nulls_only=True)
+
+
 _MIGRATIONS = [
     (1, "Добавление users.id", _migration_v1_add_users_id),
     (2, "Добавление user_id колонок", _migration_v2_add_user_id_columns),
@@ -1390,6 +1431,7 @@ _MIGRATIONS = [
     (28, "таблица identity_notif_prefs (toggle каналов)", _migration_v28_add_identity_notif_prefs),
     (29, "scheduled_broadcasts.channel (bot/site/both)", _migration_v29_add_scheduled_broadcasts_channel),
     (30, "индекс users(created_at)", _migration_v30_add_users_created_at_index),
+    (31, "Repair NULL tg_id mirrors", _migration_v31_repair_tg_mirror_nulls),
 ]
 
 
@@ -1419,28 +1461,3 @@ async def apply_all_migrations(conn: AsyncConnection) -> None:
 async def apply_account_schema_if_needed(conn: AsyncConnection) -> None:
     await apply_all_migrations(conn)
 
-
-_TG_MIRROR_TABLE_COLUMNS = (
-    ("keys", "tg_id"),
-    ("payments", "tg_id"),
-    ("referrals", "referred_tg_id"),
-    ("referrals", "referrer_tg_id"),
-    ("notifications", "tg_id"),
-    ("gift_usages", "tg_id"),
-    ("gifts", "sender_tg_id"),
-    ("gifts", "recipient_tg_id"),
-    ("manual_bans", "tg_id"),
-    ("temporary_data", "tg_id"),
-    ("blocked_users", "tg_id"),
-    ("scheduled_broadcasts", "created_by_tg_id"),
-    ("coupon_usages", "tg_id"),
-)
-
-
-async def ensure_tg_mirror_columns_and_backfill(conn: AsyncConnection) -> None:
-    if not _is_postgresql():
-        return
-    for table, col in _TG_MIRROR_TABLE_COLUMNS:
-        if await _table_exists(conn, table) and not await _column_exists(conn, table, col):
-            await conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN {col} BIGINT'))
-    await _migration_v7_backfill_tg_mirrors(conn)

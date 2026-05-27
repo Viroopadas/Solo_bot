@@ -22,6 +22,37 @@ from .keyboard import (
     build_manage_cluster_kb,
 )
 
+_KEY_EXPIRY_UPDATE_BATCH = 5000
+
+
+async def _extend_keys_expiry_batched(
+    session: AsyncSession,
+    client_ids: list[str],
+    add_ms: int,
+) -> int:
+    if not client_ids:
+        return 0
+
+    updated = 0
+    total_batches = (len(client_ids) + _KEY_EXPIRY_UPDATE_BATCH - 1) // _KEY_EXPIRY_UPDATE_BATCH
+    for batch_idx, i in enumerate(range(0, len(client_ids), _KEY_EXPIRY_UPDATE_BATCH), start=1):
+        chunk = client_ids[i : i + _KEY_EXPIRY_UPDATE_BATCH]
+        result = await session.execute(
+            update(Key)
+            .where(Key.client_id.in_(chunk))
+            .values(expiry_time=Key.expiry_time + add_ms)
+            .execution_options(synchronize_session=False)
+        )
+        rowcount = result.rowcount or 0
+        if rowcount > 0:
+            updated += rowcount
+        if batch_idx == 1 or batch_idx == total_batches or batch_idx % 10 == 0:
+            logger.info(
+                f"[Cluster Extend] DB batch {batch_idx}/{total_batches}: "
+                f"chunk={len(chunk)}, rowcount={rowcount}"
+            )
+    return updated
+
 
 @router.callback_query(AdminClusterCallback.filter(F.action == "manage"), IsAdminFilter())
 async def handle_clusters_manage(
@@ -172,6 +203,8 @@ async def handle_days_input(message: Message, state: FSMContext, session: AsyncS
 
             from panels.remnawave import RemnawaveAPI
 
+            await release_session_early(session)
+
             remna = RemnawaveAPI(api_url)
 
             try:
@@ -184,18 +217,16 @@ async def handle_days_input(message: Message, state: FSMContext, session: AsyncS
                 await state.clear()
                 return
 
-            affected = result_bulk.get("affectedRows", 0)
+            affected = int(result_bulk.get("affectedRows", 0) or 0)
             logger.info(f"[Cluster Extend] Bulk API: продлено {affected} подписок на {days} дней")
 
-            await session.execute(
-                update(Key)
-                .where(Key.server_id.in_(server_names))
-                .values(expiry_time=Key.expiry_time + add_ms)
-                .execution_options(synchronize_session=False)
-            )
+            db_updated = await _extend_keys_expiry_batched(session, uuids, add_ms)
+            logger.info(f"[Cluster Extend] DB: обновлено {db_updated} ключей")
 
             await message.answer(
-                f"✅ Время подписки продлено на <b>{days} дней</b> для <b>{affected}</b> пользователей в кластере <b>{cluster_name}</b>."
+                f"✅ Время подписки продлено на <b>{days} дней</b>.\n"
+                f"Панель: <b>{affected}</b> • БД: <b>{db_updated}</b>\n"
+                f"Кластер: <b>{cluster_name}</b>"
             )
         else:
             result = await session.execute(select(Key).where(Key.server_id.in_(server_names)))
@@ -250,7 +281,7 @@ async def handle_days_input(message: Message, state: FSMContext, session: AsyncS
     except ValueError:
         await message.answer("❌ Введите корректное число дней.")
     except Exception as e:
-        logger.error(f"[Cluster Extend] Ошибка при добавлении дней: {e}")
+        logger.exception(f"[Cluster Extend] Ошибка при добавлении дней: {type(e).__name__}: {e!r}")
         await message.answer("❌ Произошла ошибка при продлении времени.")
     finally:
         await state.clear()
