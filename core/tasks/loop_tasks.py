@@ -97,3 +97,9 @@ async def server_checks_loop(_bot, sessionmaker) -> None:
         await asyncio.Event().wait()
         return
     await check_servers(sessionmaker=sessionmaker)
+
+
+async def remnawave_monitor_loop(bot, sessionmaker) -> None:
+    from services.remnawave_monitor import remnawave_monitor_loop as run_loop
+
+    await run_loop(bot, sessionmaker)

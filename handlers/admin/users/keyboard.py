@@ -409,17 +409,62 @@ def build_reissue_menu_kb(key_ref: str, tg_id: int) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def build_hwid_menu_kb(key_ref: str, tg_id: int) -> InlineKeyboardMarkup:
+def build_hwid_menu_kb(
+    key_ref: str,
+    tg_id: int,
+    page: int = 0,
+    total_pages: int = 0,
+    devices_on_page: int = 0,
+    devices_per_page: int = 3,
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(
-        text="♻️ Сбросить HWID",
-        callback_data=AdminUserEditorCallback(action="users_hwid_reset", data=key_ref, tg_id=tg_id).pack(),
+    for idx in range(devices_on_page):
+        builder.row(
+            InlineKeyboardButton(
+                text=f"🔌 Отвязать #{page * devices_per_page + idx + 1}",
+                callback_data=AdminUserEditorCallback(
+                    action="users_hwid_unbind",
+                    data=f"{key_ref}|{page}|{idx}",
+                    tg_id=tg_id,
+                ).pack(),
+            )
+        )
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(
+            InlineKeyboardButton(
+                text="◀️",
+                callback_data=AdminUserEditorCallback(
+                    action="users_hwid_page", data=f"{key_ref}|{page - 1}", tg_id=tg_id
+                ).pack(),
+            )
+        )
+    if total_pages > 0:
+        nav.append(
+            InlineKeyboardButton(
+                text=f"{page + 1}/{total_pages}",
+                callback_data=AdminUserEditorCallback(
+                    action="users_hwid_page", data=f"{key_ref}|{page}", tg_id=tg_id
+                ).pack(),
+            )
+        )
+    if page + 1 < total_pages:
+        nav.append(
+            InlineKeyboardButton(
+                text="▶️",
+                callback_data=AdminUserEditorCallback(
+                    action="users_hwid_page", data=f"{key_ref}|{page + 1}", tg_id=tg_id
+                ).pack(),
+            )
+        )
+    if nav:
+        builder.row(*nav)
+    builder.row(
+        InlineKeyboardButton(
+            text=BACK,
+            callback_data=AdminUserEditorCallback(action="users_key_edit", data=key_ref, tg_id=tg_id).pack(),
+        )
     )
-    builder.button(
-        text=BACK,
-        callback_data=AdminUserEditorCallback(action="users_key_edit", data=key_ref, tg_id=tg_id).pack(),
-    )
-    builder.adjust(1)
     return builder.as_markup()
 
 

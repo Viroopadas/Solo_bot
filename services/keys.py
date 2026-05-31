@@ -124,8 +124,14 @@ async def calculate_renewal_pricing(
     key_email: str,
     tariff_id: int,
     coupon_code: str | None = None,
+    selected_device_limit: int | None = None,
+    selected_traffic_limit: int | None = None,
 ) -> RenewalPricing:
     """Считает цену продления без фактического выполнения.
+
+    Если тариф configurable и переданы selected_device_limit / selected_traffic_limit —
+    они используются как явный выбор и валидируются по device_options / traffic_options_gb.
+    Иначе берутся текущие значения из подписки.
 
     Raises: NotFoundError, ValidationError
     """
@@ -143,10 +149,38 @@ async def calculate_renewal_pricing(
     if not key_details:
         raise NotFoundError("Подписка не найдена")
 
-    selected_device = key_details.get("selected_device_limit")
-    selected_traffic = key_details.get("selected_traffic_limit")
-    sel_dev_int = int(selected_device) if selected_device is not None else None
-    sel_trf_int = int(selected_traffic) if selected_traffic is not None else None
+    is_configurable = bool(tariff.get("configurable"))
+
+    if is_configurable and (selected_device_limit is not None or selected_traffic_limit is not None):
+        device_options_raw = tariff.get("device_options") or []
+        traffic_options_raw = tariff.get("traffic_options_gb") or []
+        device_options = {int(v) for v in device_options_raw if str(v).lstrip("-").isdigit()}
+        traffic_options = {int(v) for v in traffic_options_raw if str(v).lstrip("-").isdigit()}
+
+        if selected_device_limit is not None:
+            if device_options and int(selected_device_limit) not in device_options:
+                raise ValidationError(
+                    f"Недопустимое количество устройств. Доступно: {sorted(device_options)}"
+                )
+            sel_dev_int = int(selected_device_limit)
+        else:
+            existing = key_details.get("selected_device_limit")
+            sel_dev_int = int(existing) if existing is not None else None
+
+        if selected_traffic_limit is not None:
+            if traffic_options and int(selected_traffic_limit) not in traffic_options:
+                raise ValidationError(
+                    f"Недопустимый объём трафика. Доступно (ГБ): {sorted(traffic_options)}"
+                )
+            sel_trf_int = int(selected_traffic_limit)
+        else:
+            existing = key_details.get("selected_traffic_limit")
+            sel_trf_int = int(existing) if existing is not None else None
+    else:
+        selected_device = key_details.get("selected_device_limit")
+        selected_traffic = key_details.get("selected_traffic_limit")
+        sel_dev_int = int(selected_device) if selected_device is not None else None
+        sel_trf_int = int(selected_traffic) if selected_traffic is not None else None
 
     from services.tariffs import calculate_config_price as calc_price_buy
 

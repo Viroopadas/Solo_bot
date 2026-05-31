@@ -87,6 +87,8 @@ class AccountKeyRenewRequest(BaseModel):
     success_url: str | None = None
     failure_url: str | None = None
     coupon_code: str | None = None
+    selected_device_limit: int | None = None
+    selected_traffic_limit: int | None = None
 
 
 class AccountKeyRenewResponse(AccountKeyActionResponse):

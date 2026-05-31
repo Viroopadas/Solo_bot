@@ -97,6 +97,8 @@ async def user_key_renew(
             key_email=key_email,
             tariff_id=effective_tariff_id,
             coupon_code=body.coupon_code,
+            selected_device_limit=body.selected_device_limit,
+            selected_traffic_limit=body.selected_traffic_limit,
         )
     except ServiceError as e:
         raise HTTPException(status_code=400, detail=e.message)
