@@ -277,6 +277,37 @@ async def set_rotation_interval(message: Message, state: FSMContext) -> None:
     )
 
 
+@router.callback_query(AdminPanelCallback.filter(F.action == "rw_rot_run_now"))
+async def run_rotation_now(callback: CallbackQuery) -> None:
+    from services.remnawave_monitor import run_host_rotation
+
+    await callback.answer("Запускаю ротацию…")
+
+    try:
+        summary = await run_host_rotation()
+    except Exception as exc:
+        logger.error("[Remnawave-Admin] Ошибка ручной ротации: {}", exc)
+        await callback.message.answer(f"<b>❌ Ошибка ротации</b>\n<code>{exc}</code>")
+        return
+
+    lines: list[str] = ["<b>🔀 Ручная ротация хостов</b>", ""]
+    lines.append(f"Хостов в ротации: <b>{summary['allowed_count']}</b>")
+    lines.append(f"Панелей: <b>{summary['panels']}</b>")
+    lines.append(f"Переставлено: <b>{summary['moved_total']}</b>")
+    if summary["details"]:
+        lines.append("")
+        lines.append("<b>Детали:</b>")
+        for line in summary["details"]:
+            lines.append(f"• {line}")
+    if summary["errors"]:
+        lines.append("")
+        lines.append("<b>⚠ Ошибки:</b>")
+        for line in summary["errors"]:
+            lines.append(f"• {line}")
+
+    await callback.message.answer("\n".join(lines))
+
+
 @router.callback_query(AdminPanelCallback.filter(F.action == "rw_rot_hosts"))
 async def open_rotation_hosts(callback: CallbackQuery, callback_data: AdminPanelCallback) -> None:
     await callback.answer("Загружаю хосты…")

@@ -356,6 +356,12 @@ def build_settings_remnawave_rotation_kb(rotation_enabled: bool, interval_min: i
     )
     builder.row(
         InlineKeyboardButton(
+            text="🔀 Перемешать сейчас",
+            callback_data=AdminPanelCallback(action="rw_rot_run_now").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
             text=BACK,
             callback_data=AdminPanelCallback(action="settings_remnawave").pack(),
         )

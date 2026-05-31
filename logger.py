@@ -69,15 +69,24 @@ logger.configure(
 level_mapping = {50: "CRITICAL", 40: "ERROR", 30: "WARNING", 20: "INFO", 10: "DEBUG", 0: "NOTSET"}
 
 
+_HTTP_NOISE_MARKERS = (
+    "Invalid method encountered",
+    "Bad status line",
+    "Pause on PRI/Upgrade",
+    "Expected HTTP/",
+    "invalid constant string",
+)
+
+
 class InterceptHandler(logging.Handler):
     def emit(self, record):
         message = record.getMessage()
-        if (
-            record.name.startswith("aiohttp.")
-            and "Invalid method encountered" in message
-            and "b'\\x16\\x03\\x01'" in message
-        ):
-            logger.opt(depth=6).warning("[HTTP] На порт пришли TLS/HTTPS данные вместо HTTP, соединение закрыто")
+        if record.name.startswith("aiohttp.") and any(m in message for m in _HTTP_NOISE_MARKERS):
+            if "\\x16\\x03" in message:
+                hint = "TLS/HTTPS-данные (ожидался обычный HTTP)"
+            else:
+                hint = "не-HTTP данные (сканер/бот?)"
+            logger.opt(depth=6).warning(f"[HTTP] На порт пришли {hint}, соединение закрыто (400 Bad Request)")
             return
         logger.opt(depth=6, exception=record.exc_info).log(level_mapping.get(record.levelno, "INFO"), message)
 

@@ -169,18 +169,42 @@ def _host_inbound_uuid(host: dict[str, Any]) -> str | None:
     return str(uuid) if uuid else None
 
 
-async def _host_rotation_tick() -> None:
+async def run_host_rotation() -> dict[str, Any]:
+    """Запускает один проход ротации. Возвращает summary для UI/логов.
+
+    Структура:
+      {
+        "allowed_count": int,
+        "panels": int,
+        "moved_total": int,
+        "details": [str, ...],
+        "errors": [str, ...],
+      }
+    """
+    result: dict[str, Any] = {
+        "allowed_count": 0,
+        "panels": 0,
+        "moved_total": 0,
+        "details": [],
+        "errors": [],
+    }
+
     allowed = get_host_rotation_allowed()
+    result["allowed_count"] = len(allowed)
     if not allowed:
-        return
+        result["details"].append("Нет хостов в ротации — отметь хосты в списке.")
+        return result
 
     panels = await _collect_remnawave_panels()
+    result["panels"] = len(panels)
     if not panels:
-        return
+        result["details"].append("Нет доступных Remnawave-панелей.")
+        return result
 
     for api_url in panels:
         api = await _login_api(api_url)
         if api is None:
+            result["errors"].append(f"{api_url}: не удалось залогиниться")
             continue
         try:
             nodes = await api.get_all_nodes() or []
@@ -188,6 +212,7 @@ async def _host_rotation_tick() -> None:
 
             if not isinstance(hosts_data, list) or not hosts_data:
                 logger.info("[Remnawave-Monitor] {}: список хостов пуст — пропуск", api_url)
+                result["details"].append(f"{api_url}: список хостов пуст")
                 continue
 
             inbound_load = _build_inbound_load_map(nodes)
@@ -218,6 +243,9 @@ async def _host_rotation_tick() -> None:
                     "[Remnawave-Monitor] {}: в ротации меньше 2 хостов ({}) — нечего двигать",
                     api_url,
                     len(movable),
+                )
+                result["details"].append(
+                    f"{api_url}: в ротации меньше 2 хостов ({len(movable)})"
                 )
                 continue
 
@@ -254,21 +282,37 @@ async def _host_rotation_tick() -> None:
                     "[Remnawave-Monitor] {}: нагрузка не изменила порядок — пропуск",
                     api_url,
                 )
+                result["details"].append(f"{api_url}: порядок уже оптимален")
                 continue
 
             ok = await api.reorder_hosts(reorder_payload)
             if ok:
+                result["moved_total"] += len(moves)
+                result["details"].append(
+                    f"{api_url}: переставлено {len(moves)} хостов"
+                )
                 logger.info(
                     "[Remnawave-Monitor] {}: переставлено {} хостов. Изменения: {}",
                     api_url,
                     len(moves),
                     "; ".join(moves) if moves else "—",
                 )
+            else:
+                result["errors"].append(f"{api_url}: reorder API вернул ошибку")
+        except Exception as exc:
+            result["errors"].append(f"{api_url}: {exc}")
+            logger.error("[Remnawave-Monitor] {} ошибка ротации: {}", api_url, exc)
         finally:
             try:
                 await api.aclose()
             except Exception:
                 pass
+
+    return result
+
+
+async def _host_rotation_tick() -> None:
+    await run_host_rotation()
 
 
 async def remnawave_monitor_loop(bot, _sessionmaker) -> None:
