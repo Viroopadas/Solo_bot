@@ -2,7 +2,7 @@ from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from ..panel.keyboard import build_admin_back_btn
+from ..panel.keyboard import AdminPanelCallback, build_admin_back_btn
 
 
 class AdminSenderCallback(CallbackData, prefix="admin_sender"):
@@ -18,6 +18,13 @@ class ScheduledBroadcastCallback(CallbackData, prefix="sb"):
     action: str
     broadcast_id: str = "0"
     page: int = 0
+
+
+class AdminPollCallback(CallbackData, prefix="admin_poll"):
+    action: str
+    poll_id: str = "0"
+    page: int = 0
+    value: str = ""
 
 
 def build_sender_kb(include_scheduled: bool = True) -> InlineKeyboardMarkup:
@@ -70,8 +77,121 @@ def build_sender_kb(include_scheduled: bool = True) -> InlineKeyboardMarkup:
                 callback_data=ScheduledBroadcastCallback(action="list").pack(),
             )
         )
+    builder.row(
+        InlineKeyboardButton(
+            text="📊 Опросы",
+            callback_data=AdminPollCallback(action="menu").pack(),
+        )
+    )
     builder.row(build_admin_back_btn())
 
+    return builder.as_markup()
+
+
+def build_polls_menu_kb(polls: list) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="➕ Создать опрос",
+            callback_data=AdminPollCallback(action="create").pack(),
+        )
+    )
+    for poll in polls:
+        status_icon = "🟢" if poll.status == "open" else "🔒"
+        question = (poll.question or "").strip().replace("\n", " ")
+        title = question[:40] + "…" if len(question) > 40 else question
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{status_icon} {title or 'без вопроса'}",
+                callback_data=AdminPollCallback(action="view", poll_id=poll.id).pack(),
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=AdminPanelCallback(action="sender").pack(),
+        )
+    )
+    return builder.as_markup()
+
+
+POLL_AUDIENCES = [
+    ("all", "👥 Все пользователи"),
+    ("subscribed", "✅ С подпиской"),
+    ("unsubscribed", "❌ Без подписки"),
+    ("untrial", "📍 Не использовавшие триал"),
+    ("trial", "🧪 Триал"),
+    ("hotleads", "🔥 Горячие лиды"),
+]
+
+
+def build_poll_preview_kb(is_anonymous: bool) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=f"👁 Анонимный: {'✅ да' if is_anonymous else '❌ нет'}",
+            callback_data=AdminPollCallback(action="anon").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(text="📤 Кому отправить", callback_data=AdminPollCallback(action="audience").pack()),
+    )
+    builder.row(
+        InlineKeyboardButton(text="❌ Отмена", callback_data=AdminPollCallback(action="menu").pack()),
+    )
+    return builder.as_markup()
+
+
+def build_poll_audience_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for code, label in POLL_AUDIENCES:
+        builder.row(
+            InlineKeyboardButton(text=label, callback_data=AdminPollCallback(action="aud", value=code).pack())
+        )
+    builder.row(
+        InlineKeyboardButton(text="◀️ Назад", callback_data=AdminPollCallback(action="back_preview").pack()),
+    )
+    return builder.as_markup()
+
+
+def build_poll_detail_kb(poll_id: str, is_open: bool) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="🔄 Обновить", callback_data=AdminPollCallback(action="view", poll_id=poll_id).pack()),
+    )
+    if is_open:
+        builder.row(
+            InlineKeyboardButton(
+                text="🔒 Закрыть опрос",
+                callback_data=AdminPollCallback(action="close", poll_id=poll_id).pack(),
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text="🗑 Удалить опрос",
+            callback_data=AdminPollCallback(action="del_ask", poll_id=poll_id).pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(text="◀️ К опросам", callback_data=AdminPollCallback(action="menu").pack()),
+    )
+    return builder.as_markup()
+
+
+def build_poll_delete_confirm_kb(poll_id: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="✅ Да, удалить",
+            callback_data=AdminPollCallback(action="del", poll_id=poll_id).pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="◀️ Отмена",
+            callback_data=AdminPollCallback(action="view", poll_id=poll_id).pack(),
+        )
+    )
     return builder.as_markup()
 
 

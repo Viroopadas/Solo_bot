@@ -1400,6 +1400,56 @@ async def _migration_v31_repair_tg_mirror_nulls(conn: AsyncConnection) -> None:
     await _run_tg_mirror_backfill(conn, nulls_only=True)
 
 
+async def _migration_v32_add_polls(conn: AsyncConnection) -> None:
+    logger.info("[schema_upgrade] v32: таблицы опросов (polls + poll_messages + poll_votes)")
+    if not await _table_exists(conn, "polls"):
+        await _exec_ignore(
+            conn,
+            """
+            CREATE TABLE polls (
+                id VARCHAR(36) PRIMARY KEY,
+                question TEXT NOT NULL,
+                options JSONB NOT NULL,
+                allows_multiple BOOLEAN NOT NULL DEFAULT FALSE,
+                is_anonymous BOOLEAN NOT NULL DEFAULT FALSE,
+                status VARCHAR(16) NOT NULL DEFAULT 'open',
+                sent_count INTEGER NOT NULL DEFAULT 0,
+                created_by_tg_id BIGINT REFERENCES users(tg_id) ON DELETE SET NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                closed_at TIMESTAMP
+            )
+            """,
+        )
+        await _exec_ignore(conn, "CREATE INDEX IF NOT EXISTS ix_polls_status ON polls (status)")
+        await _exec_ignore(conn, "CREATE INDEX IF NOT EXISTS ix_polls_created_by_tg_id ON polls (created_by_tg_id)")
+    if not await _table_exists(conn, "poll_messages"):
+        await _exec_ignore(
+            conn,
+            """
+            CREATE TABLE poll_messages (
+                telegram_poll_id VARCHAR(64) PRIMARY KEY,
+                poll_id VARCHAR(36) NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+                tg_id BIGINT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+        )
+        await _exec_ignore(conn, "CREATE INDEX IF NOT EXISTS ix_poll_messages_poll_id ON poll_messages (poll_id)")
+    if not await _table_exists(conn, "poll_votes"):
+        await _exec_ignore(
+            conn,
+            """
+            CREATE TABLE poll_votes (
+                poll_id VARCHAR(36) NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+                tg_id BIGINT NOT NULL,
+                option_ids JSONB NOT NULL,
+                voted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (poll_id, tg_id)
+            )
+            """,
+        )
+
+
 _MIGRATIONS = [
     (1, "Добавление users.id", _migration_v1_add_users_id),
     (2, "Добавление user_id колонок", _migration_v2_add_user_id_columns),
@@ -1432,6 +1482,7 @@ _MIGRATIONS = [
     (29, "scheduled_broadcasts.channel (bot/site/both)", _migration_v29_add_scheduled_broadcasts_channel),
     (30, "индекс users(created_at)", _migration_v30_add_users_created_at_index),
     (31, "Repair NULL tg_id mirrors", _migration_v31_repair_tg_mirror_nulls),
+    (32, "Таблицы опросов (polls/poll_messages/poll_votes)", _migration_v32_add_polls),
 ]
 
 

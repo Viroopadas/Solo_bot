@@ -12,6 +12,7 @@ from .instructions import router as instructions_router
 from .keys import router as keys_router
 from .notifications import router as notifications_router
 from .payments import router as payments_router
+from .polls import router as polls_router
 from .profile import router as profile_router
 from .refferal import router as refferal_router
 from .start import router as start_router
@@ -35,4 +36,5 @@ router.include_routers(
     refferal_router,
     tariff_router,
     email_binding_router,
+    polls_router,
 )

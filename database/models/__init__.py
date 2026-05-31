@@ -9,6 +9,7 @@ from .identity_session import IdentitySession
 from .keys import Key
 from .notifications import Notification, ScheduledBroadcast
 from .payments import Payment
+from .polls import Poll, PollMessage, PollVote
 from .referrals import Referral
 from .servers import Server, ServerSpecialgroup, ServerSubgroup
 from .tariffs import Tariff
@@ -50,6 +51,9 @@ __all__ = [
     "Referral",
     "Notification",
     "ScheduledBroadcast",
+    "Poll",
+    "PollMessage",
+    "PollVote",
     "Gift",
     "GiftUsage",
     "AuditEvent",
