@@ -311,21 +311,28 @@ _HOT_LEAD_NOTIFICATION_TYPES = (
 )
 
 
-async def get_hot_lead_notification_flags(session: AsyncSession, tg_ids: list[int]) -> dict[int, set[str]]:
+async def get_hot_lead_notification_flags(
+    session: AsyncSession, legacy_user_refs: list[int]
+) -> dict[int, set[str]]:
     """
-    Один запрос: для каждого tg_id возвращает множество типов уведомлений hot_lead_*,
-    которые у него уже есть. Используется в notify_hot_leads для устранения N+1.
+    Один запрос: для каждого legacy_user_ref (tg_id или user_id) возвращает множество
+    типов уведомлений hot_lead_*, которые у пользователя уже есть.
     """
-    if not tg_ids:
+    if not legacy_user_refs:
         return {}
+    id_map = await _map_legacy_refs_to_user_ids(session, legacy_user_refs)
+    if not id_map:
+        return {}
+    uids = list(set(id_map.values()))
     stmt = select(Notification.user_id, Notification.notification_type).where(
-        Notification.user_id.in_(tg_ids),
+        Notification.user_id.in_(uids),
         Notification.notification_type.in_(_HOT_LEAD_NOTIFICATION_TYPES),
     )
     result = await session.execute(stmt)
+    uid_to_ref = {id_map[ref]: ref for ref in legacy_user_refs if ref in id_map}
     out = defaultdict(set)
     for uid, ntype in result.all():
-        out[uid].add(ntype)
+        out[uid_to_ref.get(uid, uid)].add(ntype)
     return dict(out)
 
 

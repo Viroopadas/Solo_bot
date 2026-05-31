@@ -13,6 +13,7 @@ from aiogram.types import InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import async_session_maker, save_blocked_user_ids
+from handlers.admin.sender.sender_utils import is_telegram_chat_id
 from logger import logger
 
 
@@ -162,14 +163,16 @@ class BroadcastService:
 
         except TelegramForbiddenError:
             logger.warning(f"🚫 Бот заблокирован пользователем {msg.tg_id}")
-            self.blocked_users.add(msg.tg_id)
+            if is_telegram_chat_id(msg.tg_id):
+                self.blocked_users.add(msg.tg_id)
             return "fail"
 
         except TelegramBadRequest as e:
             error_msg = str(e).lower()
             if "chat not found" in error_msg:
                 logger.warning(f"🚫 Чат не найден для пользователя {msg.tg_id}")
-                self.blocked_users.add(msg.tg_id)
+                if is_telegram_chat_id(msg.tg_id):
+                    self.blocked_users.add(msg.tg_id)
             else:
                 logger.warning(f"📩 Не удалось отправить сообщение пользователю {msg.tg_id}: {e}")
             return "fail"
@@ -296,19 +299,25 @@ class BroadcastService:
         self.blocked_users = set()
         self.pending_retries = 0
 
+        bot_recipient_count = 0
         if send_to_bot:
             for msg_data in messages:
+                tg_id = msg_data["tg_id"]
+                if not is_telegram_chat_id(tg_id):
+                    continue
+                bot_recipient_count += 1
                 msg = BroadcastMessage(
-                    tg_id=msg_data["tg_id"],
+                    tg_id=tg_id,
                     text=msg_data["text"],
                     photo=msg_data.get("photo"),
                     keyboard=msg_data.get("keyboard"),
                 )
                 await self.queue.put(msg)
 
-        total = len(messages) if send_to_bot else 0
+        total = bot_recipient_count if send_to_bot else 0
         logger.info(
-            f"📤 Начата рассылка channel={channel} на {len(messages)} получателей с {workers} воркерами "
+            f"📤 Начата рассылка channel={channel} на {len(messages)} получателей "
+            f"(TG: {bot_recipient_count}) с {workers} воркерами "
             f"(rate={self.rate_limiter.max_rate}/сек, max_attempts={self.max_attempts})"
         )
 
@@ -371,7 +380,7 @@ class BroadcastService:
         }
 
         logger.info(
-            f"✅ Рассылка завершена: {success_count}/{len(messages)} успешно, "
+            f"✅ Рассылка завершена: {success_count}/{bot_recipient_count or len(messages)} успешно, "
             f"скорость: {avg_speed:.1f} сообщений/сек, время: {total_duration:.1f} сек"
         )
 

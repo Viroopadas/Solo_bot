@@ -48,7 +48,7 @@ from .scheduled_service import (
 )
 from .sender_service import BroadcastService, run_broadcast_in_thread
 from .sender_states import AdminSender
-from .sender_utils import get_recipients, parse_message_buttons
+from .sender_utils import get_recipients, is_telegram_chat_id, parse_message_buttons
 
 
 def _broadcast_progress_text(completed: int, total: int, sent: int, failed: int, pending: int = 0) -> str:
@@ -311,7 +311,7 @@ async def handle_message_input(message: Message, state: FSMContext, session: Asy
     send_to = data.get("type", "all")
     cluster_name = data.get("cluster_name")
     channel = data.get("channel", "both")
-    _, user_count = await get_recipients(session, send_to, cluster_name)
+    _, user_count = await get_recipients(session, send_to, cluster_name, telegram_only=channel == "bot")
 
     if keyboard:
         try:
@@ -370,7 +370,12 @@ async def handle_broadcast_confirm(callback_query: CallbackQuery, state: FSMCont
             await state.clear()
             return
 
-    tg_ids, total_users = await get_recipients(session, send_to, cluster_name)
+    tg_ids, total_users = await get_recipients(
+        session,
+        send_to,
+        cluster_name,
+        telegram_only=channel == "bot",
+    )
 
     if not tg_ids:
         await callback_query.message.edit_text(
@@ -381,7 +386,12 @@ async def handle_broadcast_confirm(callback_query: CallbackQuery, state: FSMCont
         return
 
     status_message = callback_query.message
-    total_users_for_bar = len(tg_ids)
+    if channel == "both":
+        total_users_for_bar = sum(1 for tid in tg_ids if is_telegram_chat_id(tid))
+    elif channel == "bot":
+        total_users_for_bar = total_users
+    else:
+        total_users_for_bar = 0
     await status_message.edit_text(
         _broadcast_progress_text(0, total_users_for_bar, 0, 0),
     )

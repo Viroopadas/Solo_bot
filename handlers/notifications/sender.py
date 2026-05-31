@@ -19,6 +19,7 @@ import pytz
 from database import async_session_maker
 from database.bans import save_blocked_user_ids
 from handlers.utils import format_hours, format_minutes, get_russian_month
+from handlers.admin.sender.sender_utils import is_telegram_chat_id
 from logger import logger
 from services.tariffs.tariff_display import get_key_tariff_display
 from utils.custom_emojis import _process_text
@@ -190,6 +191,8 @@ class FastNotificationSender:
 
     async def _send_one(self, msg: dict) -> str:
         tg_id = msg["tg_id"]
+        if not is_telegram_chat_id(tg_id):
+            return "fail"
         try:
             await self.rate_limiter.acquire()
 
@@ -243,10 +246,11 @@ class FastNotificationSender:
             msg["_retry_at"] = time.time() + wait_seconds
             return "retry"
         except TelegramForbiddenError:
-            self.blocked_users.add(tg_id)
+            if is_telegram_chat_id(tg_id):
+                self.blocked_users.add(tg_id)
             return "fail"
         except TelegramBadRequest as e:
-            if "chat not found" in str(e).lower():
+            if "chat not found" in str(e).lower() and is_telegram_chat_id(tg_id):
                 self.blocked_users.add(tg_id)
             return "fail"
         except Exception:
@@ -323,7 +327,8 @@ class FastNotificationSender:
         start = time.time()
 
         for msg in messages:
-            await self.queue.put(msg)
+            if is_telegram_chat_id(msg.get("tg_id")):
+                await self.queue.put(msg)
 
         worker_tasks = [asyncio.create_task(self._worker()) for _ in range(workers)]
 

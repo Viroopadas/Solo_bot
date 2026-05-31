@@ -133,7 +133,13 @@ async def execute_broadcast_payload(payload: dict, bot: Bot | None = None) -> di
         bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     try:
         async with async_session_maker() as session:
-            tg_ids, total_users = await get_recipients(session, payload["send_to"], payload.get("cluster_name"))
+            channel = payload.get("channel", "both")
+            tg_ids, total_users = await get_recipients(
+                session,
+                payload["send_to"],
+                payload.get("cluster_name"),
+                telegram_only=channel == "bot",
+            )
             await session.commit()
         if not tg_ids:
             return {

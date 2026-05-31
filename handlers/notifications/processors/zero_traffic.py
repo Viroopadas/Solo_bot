@@ -26,6 +26,8 @@ from panels.remnawave_runtime import fetch_all_remnawave_traffic
 
 moscow_tz = pytz.timezone("Europe/Moscow")
 
+_ZERO_TRAFFIC_UPDATE_BATCH_SIZE = 5000
+
 
 async def process_zero_traffic(
     bot: Bot,
@@ -129,7 +131,10 @@ async def process_zero_traffic(
 
     if keys_to_mark:
         try:
-            await session.execute(update(Key).where(Key.client_id.in_(keys_to_mark)).values(notified=True))
+            for i in range(0, len(keys_to_mark), _ZERO_TRAFFIC_UPDATE_BATCH_SIZE):
+                batch = keys_to_mark[i : i + _ZERO_TRAFFIC_UPDATE_BATCH_SIZE]
+                await session.execute(update(Key).where(Key.client_id.in_(batch)).values(notified=True))
+                await session.commit()
             logger.info(f"[ZeroTraffic] Отмечено {len(keys_to_mark)} ключей как notified")
         except Exception as e:
             logger.error(f"[ZeroTraffic] Ошибка обновления notified: {e}")
