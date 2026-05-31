@@ -311,7 +311,9 @@ def build_settings_remnawave_kb(
     return builder.as_markup()
 
 
-def build_settings_remnawave_node_kb(node_enabled: bool, interval_min: int) -> InlineKeyboardMarkup:
+def build_settings_remnawave_node_kb(
+    node_enabled: bool, interval_min: int, auto_disable_enabled: bool = False
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
@@ -325,6 +327,19 @@ def build_settings_remnawave_node_kb(node_enabled: bool, interval_min: int) -> I
             callback_data=AdminPanelCallback(action="rw_node_interval").pack(),
         )
     )
+    builder.row(
+        InlineKeyboardButton(
+            text=f"{'✅' if auto_disable_enabled else '❌'} Авто-отключение хостов нод",
+            callback_data=AdminPanelCallback(action="rw_autodisable_toggle").pack(),
+        )
+    )
+    if auto_disable_enabled:
+        builder.row(
+            InlineKeyboardButton(
+                text="🔌 Синхронизировать хосты сейчас",
+                callback_data=AdminPanelCallback(action="rw_node_sync_now").pack(),
+            )
+        )
     builder.row(
         InlineKeyboardButton(
             text=BACK,

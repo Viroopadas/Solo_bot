@@ -9,6 +9,7 @@ from config import REMNAWAVE_LOGIN, REMNAWAVE_PASSWORD, REMNAWAVE_TOKEN_LOGIN_EN
 from core.settings.remnawave_config import (
     REMNAWAVE_CONFIG,
     get_host_rotation_allowed,
+    is_host_auto_disable_enabled,
     update_remnawave_config,
 )
 from database import async_session_maker, get_servers
@@ -35,6 +36,10 @@ class RemnawaveSettingsState(StatesGroup):
 
 def _node_health_enabled() -> bool:
     return bool(REMNAWAVE_CONFIG.get("NODE_HEALTH_ENABLED", False))
+
+
+def _auto_disable_enabled() -> bool:
+    return is_host_auto_disable_enabled()
 
 
 def _host_rotation_enabled() -> bool:
@@ -66,6 +71,7 @@ def _root_text() -> str:
 
 def _node_text() -> str:
     state = "✅ Включена" if _node_health_enabled() else "❌ Выключена"
+    auto_state = "✅ Включено" if _auto_disable_enabled() else "❌ Выключено"
     return (
         "<b>🌀 Проверка нод</b>\n\n"
         "Бот опрашивает API панели и следит, какие ноды отвалились.\n"
@@ -73,8 +79,13 @@ def _node_text() -> str:
         "админы получают уведомление в личку.\n\n"
         f"Статус: {state}\n"
         f"Интервал опроса: <b>{_node_interval()} мин.</b>\n\n"
-        "Отключённые в панели ноды (isDisabled=true) не считаются «упавшими» — "
-        "они не дёргают уведомления."
+        f"<b>Авто-отключение хостов:</b> {auto_state}\n"
+        "Если нода перестала отвечать — бот выключает её хосты прямо в панели, "
+        "чтобы новые подключения не уходили на мёртвый сервер. "
+        "Когда нода снова в строю — хосты включаются обратно и заново ротируются.\n"
+        "Бот трогает только те хосты, что выключил сам: то, что ты отключил вручную, "
+        "останется как есть.\n\n"
+        "Проверка идёт на том же интервале, что и мониторинг нод выше."
     )
 
 
@@ -162,7 +173,7 @@ async def open_remnawave_settings(callback: CallbackQuery) -> None:
 async def open_node_menu(callback: CallbackQuery) -> None:
     await callback.message.edit_text(
         text=_node_text(),
-        reply_markup=build_settings_remnawave_node_kb(_node_health_enabled(), _node_interval()),
+        reply_markup=build_settings_remnawave_node_kb(_node_health_enabled(), _node_interval(), _auto_disable_enabled()),
     )
     await callback.answer()
 
@@ -179,7 +190,7 @@ async def toggle_node_health(callback: CallbackQuery) -> None:
     )
     await callback.message.edit_text(
         text=_node_text(),
-        reply_markup=build_settings_remnawave_node_kb(_node_health_enabled(), _node_interval()),
+        reply_markup=build_settings_remnawave_node_kb(_node_health_enabled(), _node_interval(), _auto_disable_enabled()),
     )
 
 
@@ -214,8 +225,59 @@ async def set_node_interval(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(
         text=_node_text(),
-        reply_markup=build_settings_remnawave_node_kb(_node_health_enabled(), _node_interval()),
+        reply_markup=build_settings_remnawave_node_kb(_node_health_enabled(), _node_interval(), _auto_disable_enabled()),
     )
+
+
+@router.callback_query(AdminPanelCallback.filter(F.action == "rw_autodisable_toggle"))
+async def toggle_auto_disable(callback: CallbackQuery) -> None:
+    new_cfg = dict(REMNAWAVE_CONFIG)
+    new_cfg["HOST_AUTO_DISABLE_ON_NODE_DOWN"] = not _auto_disable_enabled()
+    async with async_session_maker() as session:
+        await update_remnawave_config(session, new_cfg)
+    await callback.answer(
+        "✅ Авто-отключение хостов включено" if new_cfg["HOST_AUTO_DISABLE_ON_NODE_DOWN"] else "❌ Авто-отключение хостов выключено",
+        show_alert=True,
+    )
+    await callback.message.edit_text(
+        text=_node_text(),
+        reply_markup=build_settings_remnawave_node_kb(_node_health_enabled(), _node_interval(), _auto_disable_enabled()),
+    )
+
+
+@router.callback_query(AdminPanelCallback.filter(F.action == "rw_node_sync_now"))
+async def run_host_sync_now(callback: CallbackQuery) -> None:
+    from services.remnawave_monitor import sync_hosts_with_node_state
+
+    await callback.answer("Синхронизирую…")
+
+    try:
+        summary = await sync_hosts_with_node_state()
+    except Exception as exc:
+        logger.error("[Remnawave-Admin] Ошибка ручной синхронизации хостов: {}", exc)
+        await callback.message.answer(f"<b>❌ Ошибка синхронизации</b>\n<code>{exc}</code>")
+        return
+
+    lines: list[str] = ["<b>🔌 Синхронизация хостов с нодами</b>", ""]
+    lines.append(f"Выключено: <b>{len(summary['disabled'])}</b>")
+    lines.append(f"Включено: <b>{len(summary['enabled'])}</b>")
+    if summary["disabled"]:
+        lines.append("")
+        lines.append("<b>⛔ Выключены:</b>")
+        for remark in summary["disabled"]:
+            lines.append(f"• {remark}")
+    if summary["enabled"]:
+        lines.append("")
+        lines.append("<b>✅ Включены:</b>")
+        for remark in summary["enabled"]:
+            lines.append(f"• {remark}")
+    if summary["errors"]:
+        lines.append("")
+        lines.append("<b>⚠ Ошибки:</b>")
+        for line in summary["errors"]:
+            lines.append(f"• {line}")
+
+    await callback.message.answer("\n".join(lines))
 
 
 @router.callback_query(AdminPanelCallback.filter(F.action == "rw_rot_menu"))

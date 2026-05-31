@@ -73,6 +73,17 @@ def is_host_rotation_enabled() -> bool:
     return bool(REMNAWAVE_CONFIG.get("HOST_ROTATION_ENABLED", False))
 
 
+def is_host_auto_disable_enabled() -> bool:
+    return bool(REMNAWAVE_CONFIG.get("HOST_AUTO_DISABLE_ON_NODE_DOWN", False))
+
+
+def get_host_auto_disabled() -> set[str]:
+    raw = REMNAWAVE_CONFIG.get("HOST_AUTO_DISABLED") or []
+    if not isinstance(raw, list):
+        return set()
+    return {str(uuid) for uuid in raw if uuid}
+
+
 def get_host_rotation_allowed() -> set[str]:
     raw = REMNAWAVE_CONFIG.get("HOST_ROTATION_ALLOWED") or []
     if not isinstance(raw, list):

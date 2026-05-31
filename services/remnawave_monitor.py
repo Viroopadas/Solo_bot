@@ -5,7 +5,9 @@ from typing import Any
 from config import ADMIN_ID, REMNAWAVE_LOGIN, REMNAWAVE_PASSWORD, REMNAWAVE_TOKEN_LOGIN_ENABLED
 from core.settings.remnawave_config import (
     REMNAWAVE_CONFIG,
+    get_host_auto_disabled,
     get_host_rotation_allowed,
+    is_host_auto_disable_enabled,
     is_host_rotation_enabled,
     is_node_health_enabled,
     update_remnawave_config,
@@ -315,9 +317,139 @@ async def _host_rotation_tick() -> None:
     await run_host_rotation()
 
 
+def _node_serves_traffic(node: dict[str, Any]) -> bool:
+    return bool(node.get("isConnected")) and not node.get("isDisabled")
+
+
+def _build_inbound_alive_map(nodes: list[dict[str, Any]]) -> dict[str, bool]:
+    """Для каждого inbound — есть ли хотя бы одна живая нода, которая его обслуживает."""
+    alive: dict[str, bool] = {}
+    for node in nodes:
+        serving = _node_serves_traffic(node)
+        inbounds = (node.get("configProfile") or {}).get("activeInbounds") or []
+        for inbound in inbounds:
+            inbound_uuid = inbound.get("uuid")
+            if not inbound_uuid:
+                continue
+            key = str(inbound_uuid)
+            alive[key] = alive.get(key, False) or serving
+    return alive
+
+
+async def sync_hosts_with_node_state(bot=None) -> dict[str, Any]:
+    """Выключает хосты упавших нод и включает обратно те, что мы сами выключали.
+
+    При восстановлении хотя бы одного хоста — запускает ротацию (если она включена).
+    Возвращает summary для UI/логов.
+    """
+    result: dict[str, Any] = {"disabled": [], "enabled": [], "errors": []}
+
+    panels = await _collect_remnawave_panels()
+    if not panels:
+        result["errors"].append("Нет доступных Remnawave-панелей.")
+        return result
+
+    auto_disabled = get_host_auto_disabled()
+    changed_auto = False
+    recovered_any = False
+
+    for api_url in panels:
+        api = await _login_api(api_url)
+        if api is None:
+            result["errors"].append(f"{api_url}: не удалось залогиниться")
+            continue
+        try:
+            nodes = await api.get_all_nodes() or []
+            if not nodes:
+                result["errors"].append(f"{api_url}: список нод пуст — пропуск")
+                continue
+            hosts_data = await api.get_hosts() or []
+            if not isinstance(hosts_data, list) or not hosts_data:
+                continue
+
+            inbound_alive = _build_inbound_alive_map(nodes)
+
+            for host in hosts_data:
+                host_uuid = host.get("uuid")
+                if not host_uuid:
+                    continue
+                host_uuid = str(host_uuid)
+                ib_uuid = _host_inbound_uuid(host)
+                if ib_uuid is None:
+                    continue
+                inbound_down = not inbound_alive.get(ib_uuid, False)
+                currently_disabled = bool(host.get("isDisabled"))
+                remark = host.get("remark") or host.get("address") or host_uuid
+
+                if inbound_down:
+                    if not currently_disabled:
+                        ok = await api.set_host_enabled(host_uuid, False)
+                        if ok:
+                            auto_disabled.add(host_uuid)
+                            changed_auto = True
+                            result["disabled"].append(remark)
+                        else:
+                            result["errors"].append(f"{remark}: не удалось выключить")
+                elif host_uuid in auto_disabled:
+                    if currently_disabled:
+                        ok = await api.set_host_enabled(host_uuid, True)
+                        if not ok:
+                            result["errors"].append(f"{remark}: не удалось включить")
+                            continue
+                        result["enabled"].append(remark)
+                        recovered_any = True
+                    auto_disabled.discard(host_uuid)
+                    changed_auto = True
+        except Exception as exc:
+            result["errors"].append(f"{api_url}: {exc}")
+            logger.error("[Remnawave-Monitor] {} ошибка host-sync: {}", api_url, exc)
+        finally:
+            try:
+                await api.aclose()
+            except Exception:
+                pass
+
+    if changed_auto:
+        new_cfg = dict(REMNAWAVE_CONFIG)
+        new_cfg["HOST_AUTO_DISABLED"] = sorted(auto_disabled)
+        async with async_session_maker() as session:
+            await update_remnawave_config(session, new_cfg)
+
+    if result["disabled"] or result["enabled"]:
+        logger.info(
+            "[Remnawave-Monitor] Авто-синхронизация хостов: выключено={}, включено={}",
+            len(result["disabled"]),
+            len(result["enabled"]),
+        )
+
+    if bot is not None and (result["disabled"] or result["enabled"]):
+        lines: list[str] = ["<b>🔌 Remnawave: авто-управление хостами</b>"]
+        if result["disabled"]:
+            lines.append("")
+            lines.append("<b>⛔ Выключены (нода недоступна):</b>")
+            for remark in result["disabled"]:
+                lines.append(f"• {html_escape(str(remark))}")
+        if result["enabled"]:
+            lines.append("")
+            lines.append("<b>✅ Снова включены (нода ожила):</b>")
+            for remark in result["enabled"]:
+                lines.append(f"• {html_escape(str(remark))}")
+        await _send_to_admins(bot, "\n".join(lines), reply_markup=_build_servers_kb())
+
+    if recovered_any and is_host_rotation_enabled():
+        try:
+            await run_host_rotation()
+        except Exception as exc:
+            result["errors"].append(f"rotation: {exc}")
+            logger.error("[Remnawave-Monitor] Ошибка ротации после восстановления: {}", exc)
+
+    return result
+
+
 async def remnawave_monitor_loop(bot, _sessionmaker) -> None:
     last_node_tick = 0.0
     last_rotation_tick = 0.0
+    last_sync_tick = 0.0
 
     loop = asyncio.get_event_loop()
     while True:
@@ -332,6 +464,13 @@ async def remnawave_monitor_loop(bot, _sessionmaker) -> None:
                     await _node_health_tick(bot)
                 except Exception as exc:
                     logger.error("[Remnawave-Monitor] Ошибка node health tick: {}", exc)
+
+            if is_host_auto_disable_enabled() and (now - last_sync_tick) >= node_interval:
+                last_sync_tick = now
+                try:
+                    await sync_hosts_with_node_state(bot)
+                except Exception as exc:
+                    logger.error("[Remnawave-Monitor] Ошибка host-sync tick: {}", exc)
 
             if is_host_rotation_enabled() and (now - last_rotation_tick) >= rotation_interval:
                 last_rotation_tick = now
