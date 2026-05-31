@@ -147,10 +147,26 @@ async def _node_health_tick(bot) -> None:
             await update_remnawave_config(session, new_cfg)
 
 
-def _normalise_address(value: str | None) -> str:
-    if not value:
-        return ""
-    return value.strip().lower().rstrip(".")
+def _build_inbound_load_map(nodes: list[dict[str, Any]]) -> dict[str, int]:
+    """Сумма usersOnline по нодам, на которых активен каждый inbound."""
+    load: dict[str, int] = {}
+    for node in nodes:
+        if node.get("isDisabled") or not node.get("isConnected"):
+            continue
+        online = int(node.get("usersOnline") or 0)
+        inbounds = (node.get("configProfile") or {}).get("activeInbounds") or []
+        for inbound in inbounds:
+            inbound_uuid = inbound.get("uuid")
+            if not inbound_uuid:
+                continue
+            load[str(inbound_uuid)] = load.get(str(inbound_uuid), 0) + online
+    return load
+
+
+def _host_inbound_uuid(host: dict[str, Any]) -> str | None:
+    inbound = host.get("inbound") or {}
+    uuid = inbound.get("configProfileInboundUuid")
+    return str(uuid) if uuid else None
 
 
 async def _host_rotation_tick() -> None:
@@ -171,16 +187,15 @@ async def _host_rotation_tick() -> None:
             hosts_data = await api.get_hosts() or []
 
             if not isinstance(hosts_data, list) or not hosts_data:
+                logger.info("[Remnawave-Monitor] {}: список хостов пуст — пропуск", api_url)
                 continue
 
-            node_load_by_address: dict[str, int] = {}
-            for node in nodes:
-                address = _normalise_address(node.get("address"))
-                if not address:
-                    continue
-                online = int(node.get("usersOnline") or 0)
-                current = node_load_by_address.get(address)
-                node_load_by_address[address] = online if current is None else min(current, online)
+            inbound_load = _build_inbound_load_map(nodes)
+            logger.info(
+                "[Remnawave-Monitor] {}: нагрузка по inbound = {}",
+                api_url,
+                inbound_load,
+            )
 
             hosts_sorted = sorted(hosts_data, key=lambda h: int(h.get("viewPosition") or 0))
 
@@ -191,7 +206,7 @@ async def _host_rotation_tick() -> None:
                 host_uuid = host.get("uuid")
                 if not host_uuid:
                     continue
-                if host_uuid in allowed:
+                if str(host_uuid) in allowed:
                     movable.append(host)
                     movable_positions.append(idx)
                     new_layout.append(None)
@@ -199,14 +214,17 @@ async def _host_rotation_tick() -> None:
                     new_layout.append(host)
 
             if len(movable) < 2:
+                logger.info(
+                    "[Remnawave-Monitor] {}: в ротации меньше 2 хостов ({}) — нечего двигать",
+                    api_url,
+                    len(movable),
+                )
                 continue
 
             def host_load(host: dict[str, Any]) -> int:
-                host_addr = _normalise_address(host.get("address"))
-                sni_addr = _normalise_address(host.get("sni"))
-                for candidate in (host_addr, sni_addr):
-                    if candidate and candidate in node_load_by_address:
-                        return node_load_by_address[candidate]
+                ib_uuid = _host_inbound_uuid(host)
+                if ib_uuid and ib_uuid in inbound_load:
+                    return inbound_load[ib_uuid]
                 return 10**9
 
             movable_sorted = sorted(movable, key=host_load)
@@ -215,24 +233,36 @@ async def _host_rotation_tick() -> None:
                 new_layout[slot_idx] = host
 
             reorder_payload: list[dict[str, Any]] = []
+            moves: list[str] = []
             changed = False
             for idx, host in enumerate(new_layout):
                 if host is None:
                     continue
                 new_view_position = idx + 1
                 reorder_payload.append({"uuid": host["uuid"], "viewPosition": new_view_position})
-                if int(host.get("viewPosition") or 0) != new_view_position:
+                old_pos = int(host.get("viewPosition") or 0)
+                if old_pos != new_view_position:
                     changed = True
+                    if str(host.get("uuid")) in allowed:
+                        ib_uuid = _host_inbound_uuid(host)
+                        load_for_host = inbound_load.get(ib_uuid or "", "?")
+                        remark = host.get("remark") or host.get("address") or host["uuid"]
+                        moves.append(f"'{remark}' ({old_pos}→{new_view_position}, online={load_for_host})")
 
             if not changed:
+                logger.info(
+                    "[Remnawave-Monitor] {}: нагрузка не изменила порядок — пропуск",
+                    api_url,
+                )
                 continue
 
             ok = await api.reorder_hosts(reorder_payload)
             if ok:
                 logger.info(
-                    "[Remnawave-Monitor] hosts reordered on {}: payload {} элементов",
+                    "[Remnawave-Monitor] {}: переставлено {} хостов. Изменения: {}",
                     api_url,
-                    len(reorder_payload),
+                    len(moves),
+                    "; ".join(moves) if moves else "—",
                 )
         finally:
             try:
