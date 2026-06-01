@@ -65,15 +65,15 @@ async def user_key_renew(
 
     if body.tariff_id:
         chosen_tariff = await get_tariff_by_id(session, int(body.tariff_id))
-        chosen_group_code = (chosen_tariff.get("group_code") or "").strip() if chosen_tariff else ""
+        if not chosen_tariff or not chosen_tariff.get("is_active", True):
+            raise HTTPException(status_code=404, detail="Тариф не найден")
+        chosen_group_code = (chosen_tariff.get("group_code") or "").strip()
         if (
-            not chosen_tariff
-            or not chosen_tariff.get("is_active", True)
-            or not chosen_group_code
+            not chosen_group_code
             or chosen_group_code in forbidden_renewal_groups
             or (server_tariff_group and chosen_group_code != server_tariff_group)
         ):
-            raise HTTPException(status_code=400, detail="Тариф недоступен для продления")
+            raise HTTPException(status_code=400, detail="Тариф недоступен для этой подписки")
         effective_tariff_id = int(body.tariff_id)
     else:
         key_tariff = await get_tariff_by_id(session, int(tariff_id))
