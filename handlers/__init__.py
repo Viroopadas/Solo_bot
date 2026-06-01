@@ -16,6 +16,7 @@ from .polls import router as polls_router
 from .profile import router as profile_router
 from .refferal import router as refferal_router
 from .start import router as start_router
+from .support_triage import router as support_triage_router
 from .tariffs import router as tariff_router
 
 
@@ -37,4 +38,5 @@ router.include_routers(
     tariff_router,
     email_binding_router,
     polls_router,
+    support_triage_router,
 )
