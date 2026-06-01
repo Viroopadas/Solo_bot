@@ -78,7 +78,7 @@ async def _run_process_loop_task_async(task_id: str, runner: LoopRunner) -> None
     from database import async_session_maker
     from database.db import reset_async_db_engine
 
-    bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML, protect_content=True))
     logger.info("[PeriodicManager] Process-loop задача {} запущена, PID={}", task_id, os.getpid())
     try:
         reset_async_db_engine()

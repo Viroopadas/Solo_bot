@@ -130,7 +130,7 @@ def scheduled_broadcast_to_dict(broadcast: ScheduledBroadcast) -> dict:
 async def execute_broadcast_payload(payload: dict, bot: Bot | None = None) -> dict:
     own_bot = bot is None
     if own_bot:
-        bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML, protect_content=True))
     try:
         async with async_session_maker() as session:
             channel = payload.get("channel", "both")

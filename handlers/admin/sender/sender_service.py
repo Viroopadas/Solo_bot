@@ -40,7 +40,7 @@ def run_broadcast_in_thread(
     asyncio.set_event_loop(loop)
     bot = None
     try:
-        bot = Bot(token=api_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        bot = Bot(token=api_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML, protect_content=True))
         keyboard = InlineKeyboardMarkup.model_validate(keyboard_data) if keyboard_data else None
         messages = [{"tg_id": tg_id, "text": text_message, "photo": photo, "keyboard": keyboard} for tg_id in tg_ids]
         service = BroadcastService(bot=bot, session=None, messages_per_second=DEFAULT_MESSAGES_PER_SECOND)
