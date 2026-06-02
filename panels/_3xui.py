@@ -1,3 +1,4 @@
+import json
 import time
 
 from dataclasses import dataclass
@@ -6,7 +7,7 @@ from typing import Any
 import httpx
 import py3xui
 
-from py3xui import AsyncApi, Inbound
+from py3xui import AsyncApi, Client, Inbound
 
 from config import ADMIN_PASSWORD, ADMIN_USERNAME, SUPERNODE, USE_XUI_TOKEN, XUI_TOKEN
 from logger import logger
@@ -45,6 +46,53 @@ def _resolve_flow(inbound: Inbound) -> str:
     if security in ("reality", "tls") and network == "tcp":
         return "xtls-rprx-vision"
     return ""
+
+
+def _stream_settings_dict(inbound: Inbound) -> dict[str, Any]:
+    """streamSettings как dict — в 0.7.0 модель StreamSettings не содержит все поля (wsSettings и т.д.)."""
+    ss = getattr(inbound, "stream_settings", None)
+    if ss is None:
+        return {}
+    if isinstance(ss, str):
+        try:
+            return json.loads(ss) if ss else {}
+        except json.JSONDecodeError:
+            return {}
+    if isinstance(ss, dict):
+        return ss
+    if hasattr(ss, "model_dump"):
+        return ss.model_dump(by_alias=True)
+    return {}
+
+
+def _client_identity(client: Client | None) -> str | None:
+    if not client:
+        return None
+    for value in (client.uuid, client.id):
+        if value is not None and str(value).strip():
+            return str(value)
+    return None
+
+
+def _apply_client_identity(client: Client, client_id: str) -> None:
+    """3x-ui 3.2.x: id и uuid должны совпадать с UUID клиента."""
+    client.id = client_id
+    client.uuid = client_id
+
+
+def _build_client(config: ClientConfig, flow: str) -> Client:
+    return Client(
+        id=config.client_id,
+        uuid=config.client_id,
+        email=config.email.lower(),
+        limit_ip=config.limit_ip if config.limit_ip is not None else 0,
+        total_gb=config.total_gb,
+        expiry_time=config.expiry_time,
+        enable=config.enable,
+        tg_id=config.tg_id,
+        sub_id=config.sub_id,
+        flow=flow,
+    )
 
 
 async def _get_inbound_cached(xui: AsyncApi, inbound_id: int) -> Inbound:
@@ -86,30 +134,19 @@ async def get_xui_instance(api_url: str) -> AsyncApi:
     return xui
 
 
-async def add_client(xui: py3xui.AsyncApi, config: ClientConfig) -> dict[str, Any]:
+async def add_client(xui: py3xui.AsyncApi, config: ClientConfig) -> dict[str, Any] | None:
     try:
         inbound = await _get_inbound_cached(xui, config.inbound_id)
         flow = _resolve_flow(inbound)
+        client = _build_client(config, flow)
 
-        client = py3xui.Client(
-            id=config.client_id,
-            email=config.email.lower(),
-            limit_ip=config.limit_ip if config.limit_ip is not None else 0,
-            total_gb=config.total_gb,
-            expiry_time=config.expiry_time,
-            enable=config.enable,
-            tg_id=config.tg_id,
-            sub_id=config.sub_id,
-            flow=flow,
-        )
-
-        response = await xui.client.add(config.inbound_id, [client])
+        await xui.client.add(config.inbound_id, [client])
         logger.info(f"Клиент {config.email} успешно добавлен с ID {config.client_id} (flow={flow!r})")
-        return response if response else {"status": "failed"}
+        return {"status": "success", "email": config.email, "client_id": config.client_id}
 
     except httpx.ConnectTimeout as e:
         logger.error(f"Ошибка при добавлении клиента {config.email}: {e}")
-        return {"status": "failed", "error": "Timeout"}
+        return None
 
     except Exception as e:
         error_message = str(e)
@@ -118,7 +155,7 @@ async def add_client(xui: py3xui.AsyncApi, config: ClientConfig) -> dict[str, An
             return {"status": "duplicate", "email": config.email}
 
         logger.error(f"Ошибка при добавлении клиента {config.email}: {error_message}")
-        return {"status": "failed", "error": error_message}
+        return None
 
 
 async def extend_client_key(
@@ -134,7 +171,7 @@ async def extend_client_key(
 ) -> bool | None:
     try:
         client = await xui.client.get_by_email(email)
-        if not client or not client.id:
+        if not client or not _client_identity(client):
             logger.warning(f"Клиент с email {email} не найден или не имеет ID.")
             return None
 
@@ -143,7 +180,7 @@ async def extend_client_key(
         inbound = await _get_inbound_cached(xui, inbound_id)
         flow = _resolve_flow(inbound)
 
-        client.id = client_id
+        _apply_client_identity(client, client_id)
         client.expiry_time = new_expiry_time
         client.flow = flow
         client.sub_id = sub_id
@@ -153,7 +190,7 @@ async def extend_client_key(
         client.inbound_id = inbound_id
         client.tg_id = tg_id
 
-        await xui.client.update(client.id, client)
+        await xui.client.update(client_id, client)
         await xui.client.reset_stats(inbound_id, email)
         logger.info(f"Ключ клиента {email} успешно продлён до {new_expiry_time} (flow={flow!r})")
         return True
@@ -184,8 +221,7 @@ async def delete_client(
             logger.warning(f"Клиент с email {email} и ID {client_id} не найден")
             return False
 
-        client.id = client_id
-        await xui.client.delete(inbound_id, client.id)
+        await xui.client.delete(inbound_id, client_id)
         logger.info(f"Клиент с ID {client_id} был удален успешно")
         return True
 
@@ -235,12 +271,12 @@ async def toggle_client(
 
         client.sub_id = email
         client.enable = enable
-        client.id = client_id
+        _apply_client_identity(client, client_id)
         client.flow = flow
         client.limit_ip = 0
         client.inbound_id = inbound_id
 
-        await xui.client.update(client.id, client)
+        await xui.client.update(client_id, client)
         status = "включен" if enable else "отключен"
         logger.info(f"Клиент с email {email} и ID {client_id} успешно {status} (flow={flow!r}).")
         return True
@@ -266,15 +302,16 @@ def build_vless_link_from_inbound(
     client_flow: str | None = None,
 ) -> str:
     name = remark or email
-    security = (inbound.stream_settings.security or "").lower()
-    network = (inbound.stream_settings.network or "").lower()
+    stream = _stream_settings_dict(inbound)
+    security = (stream.get("security") or "").lower()
+    network = (stream.get("network") or "").lower()
 
     def _first(val):
         if isinstance(val, list) and val:
             return val[0]
         return val or ""
 
-    rs = inbound.stream_settings.reality_settings or {}
+    rs = stream.get("realitySettings") or {}
     rs_settings = rs.get("settings") or {}
 
     pbk = rs_settings.get("publicKey") or rs.get("publicKey") or ""
@@ -299,7 +336,7 @@ def build_vless_link_from_inbound(
         return "".join(parts)
 
     if network == "ws":
-        ws = inbound.stream_settings.ws_settings or {}
+        ws = stream.get("wsSettings") or {}
         path = (ws.get("path") or "/").strip() or "/"
         host_hdr = external_host
         if security == "tls":
@@ -339,7 +376,7 @@ async def get_vless_link_for_client(
         if getattr(inbound, "settings", None) and getattr(inbound.settings, "clients", None):
             for c in inbound.settings.clients:
                 if getattr(c, "email", None) == email:
-                    true_uuid = getattr(c, "id", None)
+                    true_uuid = _client_identity(c)
                     client_flow = getattr(c, "flow", None)
                     break
 
