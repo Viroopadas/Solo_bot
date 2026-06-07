@@ -9,6 +9,7 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import API_TOKEN, REDIS_URL
+from core.settings.modes_config import resolve_protect_content
 from database import async_session_maker
 from filters.private import IsPrivateFilter
 from utils.button_icons import apply_button_icons_patch, set_button_icon_config
@@ -19,7 +20,7 @@ from utils.modules_loader import load_modules_from_folder, modules_hub
 
 apply_button_icons_patch()
 
-bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML, protect_content=True))
+bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML, protect_content=resolve_protect_content()))
 
 RedisStorage = import_module("aiogram.fsm.storage.redis").RedisStorage
 _redis_asyncio = import_module("redis.asyncio")

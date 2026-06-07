@@ -22,6 +22,7 @@ from config import API_TOKEN, BOT_SERVICE
 from core.bootstrap import MANAGEMENT_CONFIG
 from core.executor import run_io
 from core.settings.management_config import update_management_config
+from core.settings.modes_config import resolve_protect_content
 from database import async_session_maker
 from database.models import Key, ScheduledBroadcast, Server, User
 from database.scheduled_broadcasts import (
@@ -87,7 +88,9 @@ _broadcast_bot: Bot | None = None
 def _get_broadcast_bot() -> Bot:
     global _broadcast_bot
     if _broadcast_bot is None:
-        _broadcast_bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML, protect_content=True))
+        _broadcast_bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML, protect_content=resolve_protect_content()))
+    elif _broadcast_bot.default is not None:
+        _broadcast_bot.default.protect_content = resolve_protect_content()
     return _broadcast_bot
 
 

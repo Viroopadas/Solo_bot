@@ -12,6 +12,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, Teleg
 from aiogram.types import InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.settings.modes_config import resolve_protect_content
 from database import async_session_maker, save_blocked_user_ids
 from handlers.admin.sender.sender_utils import is_telegram_chat_id
 from logger import logger
@@ -40,7 +41,7 @@ def run_broadcast_in_thread(
     asyncio.set_event_loop(loop)
     bot = None
     try:
-        bot = Bot(token=api_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML, protect_content=True))
+        bot = Bot(token=api_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML, protect_content=resolve_protect_content()))
         keyboard = InlineKeyboardMarkup.model_validate(keyboard_data) if keyboard_data else None
         messages = [{"tg_id": tg_id, "text": text_message, "photo": photo, "keyboard": keyboard} for tg_id in tg_ids]
         service = BroadcastService(bot=bot, session=None, messages_per_second=DEFAULT_MESSAGES_PER_SECOND)

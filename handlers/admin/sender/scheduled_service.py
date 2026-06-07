@@ -10,6 +10,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import InlineKeyboardMarkup
 
 from config import API_TOKEN
+from core.settings.modes_config import resolve_protect_content
 from database import async_session_maker, save_blocked_user_ids
 from database.models import ScheduledBroadcast
 from database.scheduled_broadcasts import (
@@ -130,7 +131,7 @@ def scheduled_broadcast_to_dict(broadcast: ScheduledBroadcast) -> dict:
 async def execute_broadcast_payload(payload: dict, bot: Bot | None = None) -> dict:
     own_bot = bot is None
     if own_bot:
-        bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML, protect_content=True))
+        bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML, protect_content=resolve_protect_content()))
     try:
         async with async_session_maker() as session:
             channel = payload.get("channel", "both")

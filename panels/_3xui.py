@@ -49,7 +49,6 @@ def _resolve_flow(inbound: Inbound) -> str:
 
 
 def _stream_settings_dict(inbound: Inbound) -> dict[str, Any]:
-    """streamSettings как dict — в 0.7.0 модель StreamSettings не содержит все поля (wsSettings и т.д.)."""
     ss = getattr(inbound, "stream_settings", None)
     if ss is None:
         return {}
@@ -75,7 +74,6 @@ def _client_identity(client: Client | None) -> str | None:
 
 
 def _apply_client_identity(client: Client, client_id: str) -> None:
-    """3x-ui 3.2.x: id и uuid должны совпадать с UUID клиента."""
     client.id = client_id
     client.uuid = client_id
 

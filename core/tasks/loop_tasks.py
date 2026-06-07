@@ -35,6 +35,7 @@ def backup_thread_loop(stop_event, _bot, _sessionmaker) -> None:
     from aiogram.enums import ParseMode
 
     from config import API_TOKEN, BACKUP_TIME
+    from core.settings.modes_config import resolve_protect_content
     from utils.backup import backup_database
 
     if BACKUP_TIME <= 0:
@@ -42,7 +43,7 @@ def backup_thread_loop(stop_event, _bot, _sessionmaker) -> None:
         return
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    backup_bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML, protect_content=True))
+    backup_bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML, protect_content=resolve_protect_content()))
     try:
         while not stop_event.is_set():
             error = loop.run_until_complete(backup_database(bot_instance=backup_bot))
