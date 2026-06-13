@@ -338,7 +338,7 @@ def safe_confirm(message: str, default: bool = False, **kwargs) -> bool:
     Срезает не-ASCII «мусор» от переключения раскладки и принимает y/n в любой
     раскладке (y/да/д/у → да, n/нет/н → нет). Пустой ввод → значение по умолчанию.
     """
-    suffix = " [Y/n]" if default else " [y/n]"
+    suffix = " (Y/n)" if default else " (y/n)"
     while True:
         try:
             raw = Prompt.ask(f"{message}{suffix}", **kwargs)
