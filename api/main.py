@@ -51,17 +51,21 @@ _WEAK_PASSWORDS = frozenset({"111", "1111", "admin", "password", "12345678", "qw
 
 
 def _log_security_checklist() -> None:
-    from config import API_TOKEN_TTL_DAYS, LOGGING_LEVEL, WEB_ADMIN_PASSWORD
+    import config
+
+    api_token_ttl_days = getattr(config, "API_TOKEN_TTL_DAYS", None)
+    logging_level = getattr(config, "LOGGING_LEVEL", "INFO")
+    web_admin_password = getattr(config, "WEB_ADMIN_PASSWORD", None)
 
     issues: list[str] = []
-    pwd = (WEB_ADMIN_PASSWORD or "").strip()
+    pwd = (web_admin_password or "").strip()
     if pwd and (len(pwd) < 8 or pwd.lower() in _WEAK_PASSWORDS):
         issues.append("WEB_ADMIN_PASSWORD слабый (короче 8 символов или словарный) — смените в config.py")
     if API_CORS_ORIGINS == ["*"]:
         issues.append("API_CORS_ORIGINS = ['*'] — укажите конкретные домены в config.py")
-    if str(LOGGING_LEVEL).upper() == "DEBUG":
+    if str(logging_level).upper() == "DEBUG":
         issues.append("LOGGING_LEVEL = DEBUG — в проде используйте INFO или WARNING")
-    if API_TOKEN_TTL_DAYS is None:
+    if api_token_ttl_days is None:
         issues.append("API_TOKEN_TTL_DAYS не задан — сессии бессрочные, рекомендуется 30-90 дней")
     for issue in issues:
         logger.warning("[SECURITY] {}", issue)
