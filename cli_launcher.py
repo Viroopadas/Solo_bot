@@ -196,7 +196,7 @@ def ensure_utf8_locale():
 
 
 try:
-    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
     pass
@@ -328,14 +328,33 @@ def warn_english_only():
     console.print("[yellow]Пожалуйста, переключите раскладку на ENG и введите снова.[/yellow]")
 
 
-def safe_confirm(message: str, **kwargs) -> bool:
-    """Безопасный Confirm.ask с защитой от русской раскладки."""
+_CONFIRM_YES = {"y", "yes", "1", "true", "д", "да", "у"}
+_CONFIRM_NO = {"n", "no", "0", "false", "н", "нет"}
+
+
+def safe_confirm(message: str, default: bool = False, **kwargs) -> bool:
+    """Подтверждение y/n, устойчивое к раскладке.
+
+    Срезает не-ASCII «мусор» от переключения раскладки и принимает y/n в любой
+    раскладке (y/да/д/у → да, n/нет/н → нет). Пустой ввод → значение по умолчанию.
+    """
+    suffix = " [Y/n]" if default else " [y/n]"
     while True:
         try:
-            result = Confirm.ask(message, **kwargs)
-            return result
+            raw = Prompt.ask(f"{message}{suffix}", **kwargs)
         except UnicodeDecodeError:
             warn_english_only()
+            continue
+        text = str(raw if raw is not None else "").strip()
+        if not text:
+            return default
+        ascii_only = "".join(ch for ch in text if ord(ch) < 128).strip().lower()
+        candidate = ascii_only or text.lower()
+        if candidate in _CONFIRM_YES or candidate[:1] in ("y",):
+            return True
+        if candidate in _CONFIRM_NO or candidate[:1] in ("n",):
+            return False
+        console.print("[yellow]Введите y (да) или n (нет).[/yellow]")
 
 
 def safe_prompt(message: str, **kwargs) -> str:

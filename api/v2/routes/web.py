@@ -1778,7 +1778,6 @@ async def web_admin_audit(
 
 
 _BOT_LOG_PATH = Path("logs/logging.log")
-_SITE_LOG_PATH = Path("web-app/logs/web.log")
 _LEVEL_RANK = {"DEBUG": 0, "TRACE": 0, "INFO": 1, "SUCCESS": 1, "WARNING": 2, "ERROR": 3, "CRITICAL": 4}
 
 
@@ -1821,6 +1820,49 @@ def _is_api_log(entry: dict) -> bool:
     return "[API]" in (entry.get("text") or "") or "log_api_access" in (entry.get("loc") or "")
 
 
+def _site_log_token() -> str:
+    try:
+        from core.settings.web_config import WEB_CONFIG
+
+        tok = str((WEB_CONFIG or {}).get("PLUGIN_BUILDER_TOKEN") or "").strip()
+        if tok:
+            return tok
+    except Exception:
+        pass
+    try:
+        from config import PLUGIN_BUILDER_TOKEN
+
+        return str(PLUGIN_BUILDER_TOKEN or "").strip()
+    except Exception:
+        return ""
+
+
+async def _fetch_site_log_lines(max_lines: int) -> tuple[list[str], bool]:
+    from core.settings.web_config import get_site_url
+
+    base = (get_site_url() or "").rstrip("/")
+    token = _site_log_token()
+    if not base or not token:
+        return [], False
+    import aiohttp
+
+    url = f"{base}/api/internal/site-log?limit={max_lines}"
+    try:
+        timeout = aiohttp.ClientTimeout(total=8)
+        async with aiohttp.ClientSession(timeout=timeout) as http:
+            async with http.get(url, headers={"Authorization": f"Bearer {token}"}) as resp:
+                if resp.status != 200:
+                    return [], False
+                data = await resp.json()
+        if not isinstance(data, dict):
+            return [], False
+        lines = data.get("lines") if isinstance(data.get("lines"), list) else []
+        return [str(line) for line in lines], bool(data.get("available", True))
+    except Exception as e:
+        logger.warning("[logs] не удалось получить лог сайта: {}", e)
+        return [], False
+
+
 @router.get("/api/web/logs")
 @router.get("/logs")
 async def get_logs(
@@ -1829,9 +1871,11 @@ async def get_logs(
     level: str = Query("all"),
     _identity=Depends(verify_identity_admin),
 ):
-    path = _SITE_LOG_PATH if source == "site" else _BOT_LOG_PATH
-    read_mult = 6 if source in ("api", "bot") else 3
-    raw_lines = _tail_lines(path, min(limit * read_mult, 6000))
+    if source == "site":
+        raw_lines, available = await _fetch_site_log_lines(min(limit * 3, 6000))
+    else:
+        raw_lines = _tail_lines(_BOT_LOG_PATH, min(limit * 6, 6000))
+        available = _BOT_LOG_PATH.exists()
     entries = [_parse_log_line(line) for line in raw_lines if line.strip()]
     if source == "api":
         entries = [e for e in entries if _is_api_log(e)]
@@ -1840,7 +1884,7 @@ async def get_logs(
     min_rank = {"warn": 2, "error": 3}.get(level, 0)
     if min_rank:
         entries = [e for e in entries if _LEVEL_RANK.get(e["level"], 1) >= min_rank]
-    return {"source": source, "available": path.exists(), "entries": entries[-limit:]}
+    return {"source": source, "available": available, "entries": entries[-limit:]}
 
 
 @router.get("/api/web/logs/health")
@@ -1863,6 +1907,7 @@ async def get_logs_health(_identity=Depends(verify_identity_admin)):
     out["api"] = {"available": bot_available, **_count([e for e in bot_lines if _is_api_log(e)])}
     out["bot"] = {"available": bot_available, **_count([e for e in bot_lines if not _is_api_log(e)])}
 
-    site_lines = [_parse_log_line(line) for line in _tail_lines(_SITE_LOG_PATH, 500) if line.strip()]
-    out["site"] = {"available": _SITE_LOG_PATH.exists(), **_count(site_lines)}
+    site_raw, site_available = await _fetch_site_log_lines(500)
+    site_lines = [_parse_log_line(line) for line in site_raw if line.strip()]
+    out["site"] = {"available": site_available, **_count(site_lines)}
     return out

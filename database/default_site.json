@@ -406,7 +406,7 @@
    }
   },
   {
-   "type": "notificationBanner",
+   "type": "defaultNotifFeed",
    "order": 1,
    "data": {
     "col": 5,
@@ -421,7 +421,6 @@
     "fontScale": 1,
     "mobileCol": 0,
     "mobileRow": 8,
-    "emptyTitle": "Нет новых уведомлений",
     "vs_surface": false,
     "fineColSpan": 71,
     "fineRowSpan": 48,
@@ -429,10 +428,28 @@
     "cabinetTabId": "notifications",
     "mobileGridV2": true,
     "mobileHidden": false,
-    "emptySubtitle": "Мы сообщим, когда будет что-то важное.",
     "mobileColSpan": 24,
     "mobileRowSpan": 45,
-    "cabinetTabGroup": "cabinet"
+    "cabinetTabGroup": "cabinet",
+    "monoFontFamily": "",
+    "panelHeader": "",
+    "filterAllFormat": "Все · {count}",
+    "filterUnreadFormat": "Новые · {count}",
+    "filterImportantFormat": "Важные · {count}",
+    "markAllLabel": "Прочитать все",
+    "markAllBusyLabel": "...",
+    "markAllSuccessText": "Прочитано",
+    "markAllErrorText": "Не удалось",
+    "clearAllLabel": "Удалить все",
+    "clearAllConfirmLabel": "Точно?",
+    "emptyText": "Уведомлений нет",
+    "unauthenticatedText": "Войдите в аккаунт",
+    "loadingText": "Загрузка...",
+    "maxItems": 30,
+    "deleteLabel": "Удалить",
+    "expandLabel": "Подробнее",
+    "collapseLabel": "Свернуть",
+    "swipeHint": "← свайп для удаления"
    }
   },
   {
