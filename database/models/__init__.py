@@ -6,7 +6,7 @@ from .gifts import Gift, GiftUsage
 from .identity import Identity
 from .identity_notif_prefs import IdentityNotifPref
 from .identity_session import IdentitySession
-from .keys import Key
+from .keys import Key, KeyTrafficHistory
 from .notifications import Notification, ScheduledBroadcast
 from .payments import Payment
 from .polls import Poll, PollMessage, PollVote
@@ -20,6 +20,7 @@ from .web import (
     WebErrorReport,
     WebFlow,
     WebFlowEvent,
+    WebPageView,
     WebNotification,
     WebPage,
     WebPageVariant,
@@ -41,6 +42,7 @@ __all__ = [
     "BlockedUser",
     "TrackingSource",
     "Key",
+    "KeyTrafficHistory",
     "Tariff",
     "Server",
     "ServerSubgroup",
@@ -62,6 +64,7 @@ __all__ = [
     "WebPage",
     "WebTheme",
     "WebBlock",
+    "WebPageView",
     "WebPageVariant",
     "WebPageVariantBlock",
     "WebPushSubscription",

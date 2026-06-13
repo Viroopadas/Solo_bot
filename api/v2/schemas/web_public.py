@@ -106,6 +106,11 @@ class AccountKeyRenewResponse(AccountKeyActionResponse):
     payment_url: str | None = None
     requires_tariff_selection: bool = False
     available_tariff_group: str | None = None
+    is_switch: bool = False
+    credit_to_balance_rub: int = 0
+    refund_to_balance_rub: int = 0
+    new_device_limit: int | None = None
+    new_traffic_gb: int | None = None
 
 
 class AccountKeyResetHwidResponse(AccountKeyActionResponse):
@@ -213,6 +218,9 @@ class AccountKeyConnectionResponse(BaseModel):
     cluster_name: str = ""
     panel_type: str = ""
     protocol: str = ""
+    is_online: bool | None = None
+    online_at: str | None = None
+    connected_devices: int | None = None
 
 
 class AccountSearchHit(BaseModel):
@@ -376,6 +384,12 @@ class ReferralQrResponse(BaseModel):
     image_data_url: str = ""
 
 
+class GiftQrResponse(BaseModel):
+    ok: bool = True
+    link: str = ""
+    image_data_url: str = ""
+
+
 class ReferralConditionsResponse(BaseModel):
     title: str = ""
     summary: str = ""
@@ -482,3 +496,22 @@ class PartnerPayoutEntryResponse(BaseModel):
 class PartnerPayoutHistoryResponse(BaseModel):
     total: int = 0
     items: list[PartnerPayoutEntryResponse] = []
+
+
+class PartnerPayoutMethodOption(BaseModel):
+    key: str
+    label: str
+    hint: str = ""
+
+
+class PartnerPayoutMethodState(BaseModel):
+    configured: bool = False
+    method: str | None = None
+    method_label: str | None = None
+    masked: str | None = None
+    methods: list[PartnerPayoutMethodOption] = []
+
+
+class PartnerPayoutMethodUpdate(BaseModel):
+    method: str = Field(..., min_length=1, max_length=20)
+    requisites: str = Field(..., min_length=1, max_length=128)

@@ -24,6 +24,7 @@ NOTIFICATION_TITLES: Final[dict[str, str]] = {
     "DELETE_KEY_ENABLED": "Удалять просроченные",
     "RENEW_EXPIRED_ENABLED": "Продлевать просроченные",
     "HOT_LEADS_ENABLED": "Горячие лиды",
+    "COLD_LEADS_ENABLED": "Холодные лиды",
 }
 
 NOTIFICATION_TIME_FIELDS: Final[dict[str, str]] = {
@@ -35,6 +36,7 @@ NOTIFICATION_TIME_FIELDS: Final[dict[str, str]] = {
     "EXTRA_DAYS_AFTER_EXPIRY": "Дни к пробнику",
     "INACTIVE_TRAFFIC_ENABLED": "Трафик неакт. (ч)",
     "HOT_LEADS_INTERVAL_HOURS": "Гор.лиды (ч)",
+    "COLD_LEADS_INTERVAL_HOURS": "Хол.лиды (ч)",
     "DISCOUNT_ACTIVE_HOURS": "Скидка (ч)",
     "RENEW_BUTTON_BEFORE_DAYS": "Кнопка продл. за (дн)",
 }

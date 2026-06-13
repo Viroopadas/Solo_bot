@@ -263,6 +263,16 @@ async def get_link_status(
     if owner_ref is None or int(owner_ref) != int(billing_user_ref):
         raise HTTPException(status_code=404, detail="Payment not found")
     status = str(payment.get("status") or "").lower() or None
+    if status not in {"success", "failed", "cancelled"}:
+        from services.payments.reconcile import reconcile_pending_payment
+
+        try:
+            if await reconcile_pending_payment(payment):
+                status = "success"
+        except Exception as e:
+            from logger import logger
+
+            logger.warning(f"[PaymentLinks] Сверка платежа {payment_id} с провайдером не удалась: {e}")
     return PaymentLinkStatusResponse(
         success=True,
         payment_id=payment_id,

@@ -551,30 +551,55 @@ async def handle_export_keys_csv(callback_query: CallbackQuery, session: AsyncSe
         await callback_query.message.edit_text(text=f"❗ Ошибка: {e}", reply_markup=kb)
 
 
+def _moscow_day_window(report_date: date, moscow_tz) -> tuple[datetime, datetime]:
+    start = moscow_tz.localize(datetime.combine(report_date, datetime.min.time()))
+    end = start + timedelta(days=1)
+    return start, end
+
+
+def _format_trend(current: float, previous: float, suffix: str = "") -> str:
+    diff = round(current - previous, 2)
+    if diff == 0:
+        return " <i>→ без изменений</i>"
+    arrow = "📈" if diff > 0 else "📉"
+    sign = "+" if diff > 0 else "−"
+    return f" <i>{arrow} {sign}{abs(diff):g}{suffix} к пред. дню</i>"
+
+
 async def send_daily_stats_report(session: AsyncSession):
     try:
         moscow_tz = pytz.timezone("Europe/Moscow")
         now_moscow = datetime.now(moscow_tz)
-        update_time = now_moscow.strftime("%d.%m.%y %H:%M")
+        update_time = now_moscow.strftime("%d.%m.%Y %H:%M")
 
         report_date = now_moscow.date() - timedelta(days=1)
+        prev_date = report_date - timedelta(days=1)
 
-        start = moscow_tz.localize(datetime.combine(report_date, datetime.min.time()))
-        end = moscow_tz.localize(datetime.combine(report_date + timedelta(days=1), datetime.min.time()))
+        day_start, day_end = _moscow_day_window(report_date, moscow_tz)
+        prev_start, prev_end = _moscow_day_window(prev_date, moscow_tz)
 
-        start_utc = start.astimezone(pytz.UTC).replace(tzinfo=None)
-        end_utc = end.astimezone(pytz.UTC).replace(tzinfo=None)
+        day_start_utc = day_start.astimezone(pytz.UTC).replace(tzinfo=None)
+        day_end_utc = day_end.astimezone(pytz.UTC).replace(tzinfo=None)
+        prev_start_utc = prev_start.astimezone(pytz.UTC).replace(tzinfo=None)
+        prev_end_utc = prev_end.astimezone(pytz.UTC).replace(tzinfo=None)
 
-        registrations_today = await count_users_registered_between(session, start_utc, end_utc)
-        payments_today = await sum_payments_between(session, start.replace(tzinfo=None), end.replace(tzinfo=None))
-        active_keys = await count_active_keys(session)
+        new_users = await count_users_registered_between(session, day_start_utc, day_end_utc)
+        new_users_prev = await count_users_registered_between(session, prev_start_utc, prev_end_utc)
+
+        revenue = await sum_payments_between(session, day_start.replace(tzinfo=None), day_end.replace(tzinfo=None))
+        revenue_prev = await sum_payments_between(session, prev_start.replace(tzinfo=None), prev_end.replace(tzinfo=None))
 
         text = (
-            f"🗓️ <b>Сводка за {report_date.strftime('%d.%m.%Y')} с 00:00 до 23:59 МСК</b>\n\n"
-            f"👤 Новых пользователей: <b>{registrations_today}</b>\n"
-            f"💰 Оплачено: <b>{payments_today} ₽</b>\n"
-            f"🔐 Активных подписок: <b>{active_keys}</b>\n\n"
-            f"⏱️ <i>Отчёт сгенерирован: {update_time} МСК</i>"
+            f"🌙 <b>Ежедневная сводка</b>\n"
+            f"📅 <i>{report_date.strftime('%d.%m.%Y')} · 00:00–23:59 МСК</i>\n\n"
+            f"👤 Новых пользователей: <b>{new_users}</b>{_format_trend(new_users, new_users_prev)}\n"
+            f"💰 Доход за день: <b>{revenue} ₽</b>{_format_trend(revenue, revenue_prev, ' ₽')}\n\n"
+            f"🔮 <b>Прогноз по темпу дня</b>\n"
+            f"<blockquote>"
+            f"├ 📆 За неделю: <b>~{round(new_users * 7)}</b> польз. · <b>~{round(revenue * 7)} ₽</b>\n"
+            f"└ 🗓️ За месяц: <b>~{round(new_users * 30)}</b> польз. · <b>~{round(revenue * 30)} ₽</b>\n"
+            f"</blockquote>\n"
+            f"⏱️ <i>Сформировано: {update_time} МСК</i>"
         )
 
         for admin_id in ADMIN_ID:

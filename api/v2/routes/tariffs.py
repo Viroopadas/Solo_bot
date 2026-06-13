@@ -31,32 +31,15 @@ from logger import logger
 from services.keys import create_vpn_key_headless
 from services.payments.payment_links import PaymentLinkRequest, create_payment_link
 from services.payments.providers import WEB_LINK_PROVIDER_IDS
-from services.tariffs import calculate_config_price
+from services.tariffs import calculate_config_price, filter_config_options
 
 
 def _tariff_to_public(t: Tariff) -> TariffPublic:
     dev_opts = getattr(t, "device_options", None)
     tr_opts = getattr(t, "traffic_options_gb", None)
-    device_options: list[int] | None = None
-    traffic_options_gb: list[int] | None = None
-    if isinstance(dev_opts, list):
-        device_options = []
-        for x in dev_opts:
-            try:
-                device_options.append(int(x))
-            except (TypeError, ValueError):
-                continue
-        if not device_options:
-            device_options = None
-    if isinstance(tr_opts, list):
-        traffic_options_gb = []
-        for x in tr_opts:
-            try:
-                traffic_options_gb.append(int(x))
-            except (TypeError, ValueError):
-                continue
-        if not traffic_options_gb:
-            traffic_options_gb = None
+    filtered_devices, filtered_traffic = filter_config_options(t)
+    device_options = filtered_devices if isinstance(dev_opts, list) and filtered_devices else None
+    traffic_options_gb = filtered_traffic if isinstance(tr_opts, list) and filtered_traffic else None
     return TariffPublic(
         id=t.id,
         name=t.name or "",

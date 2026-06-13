@@ -310,6 +310,12 @@ _HOT_LEAD_NOTIFICATION_TYPES = (
     "hot_lead_step_2_expired",
 )
 
+_COLD_LEAD_NOTIFICATION_TYPES = (
+    "cold_lead_step_1",
+    "cold_lead_step_2",
+    "cold_lead_step_3",
+)
+
 
 async def get_hot_lead_notification_flags(
     session: AsyncSession, legacy_user_refs: list[int]
@@ -327,6 +333,27 @@ async def get_hot_lead_notification_flags(
     stmt = select(Notification.user_id, Notification.notification_type).where(
         Notification.user_id.in_(uids),
         Notification.notification_type.in_(_HOT_LEAD_NOTIFICATION_TYPES),
+    )
+    result = await session.execute(stmt)
+    uid_to_ref = {id_map[ref]: ref for ref in legacy_user_refs if ref in id_map}
+    out = defaultdict(set)
+    for uid, ntype in result.all():
+        out[uid_to_ref.get(uid, uid)].add(ntype)
+    return dict(out)
+
+
+async def get_cold_lead_notification_flags(
+    session: AsyncSession, legacy_user_refs: list[int]
+) -> dict[int, set[str]]:
+    if not legacy_user_refs:
+        return {}
+    id_map = await _map_legacy_refs_to_user_ids(session, legacy_user_refs)
+    if not id_map:
+        return {}
+    uids = list(set(id_map.values()))
+    stmt = select(Notification.user_id, Notification.notification_type).where(
+        Notification.user_id.in_(uids),
+        Notification.notification_type.in_(_COLD_LEAD_NOTIFICATION_TYPES),
     )
     result = await session.execute(stmt)
     uid_to_ref = {id_map[ref]: ref for ref in legacy_user_refs if ref in id_map}

@@ -22,6 +22,9 @@ from api.v2.schemas.web_public import (
     PartnerInvitedResponse,
     PartnerPayoutEntryResponse,
     PartnerPayoutHistoryResponse,
+    PartnerPayoutMethodOption,
+    PartnerPayoutMethodState,
+    PartnerPayoutMethodUpdate,
     PartnerPayoutRequestCreate,
     PartnerPayoutRequestResponse,
     PartnerQrResponse,
@@ -496,6 +499,80 @@ async def partner_payouts_me(
     return PartnerPayoutHistoryResponse(total=total, items=items)
 
 
+def _payout_method_options() -> list[PartnerPayoutMethodOption]:
+    try:
+        from modules.partner_program import buttons as B
+        from modules.partner_program import settings as S
+    except Exception:
+        return []
+    defs = [
+        (B.METHOD_CARD, B.BTN_METHOD_CARD, bool(getattr(S, "ENABLE_PAYOUT_CARD", False)), "16 цифр номера карты"),
+        (B.METHOD_SBP, B.BTN_METHOD_SBP, bool(getattr(S, "ENABLE_PAYOUT_SBP", False)), "Номер телефона и название банка"),
+        (B.METHOD_USDT, B.BTN_METHOD_USDT, bool(getattr(S, "ENABLE_PAYOUT_USDT", False)), "USDT-адрес сети TRC20 (начинается с T)"),
+        (B.METHOD_TON, B.BTN_METHOD_TON, bool(getattr(S, "ENABLE_PAYOUT_TON", False)), "Адрес TON-кошелька"),
+    ]
+    return [PartnerPayoutMethodOption(key=key, label=label, hint=hint) for key, label, enabled, hint in defs if enabled]
+
+
+@router.get("/payout-method/me", response_model=PartnerPayoutMethodState)
+async def partner_payout_method_me(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    identity=Depends(verify_identity_token),
+):
+    user_id, _ = await _resolve_partner_user(session, request, identity)
+    row = (
+        await session.execute(
+            text("SELECT payout_method, card_number FROM users WHERE id = :id"),
+            {"id": user_id},
+        )
+    ).first()
+    method = (row[0] if row else None) or None
+    card = (row[1] if row else None) or None
+    configured = bool(card and str(card).strip())
+    from modules.partner_program.handlers.utils import mask_requisites, method_label
+    return PartnerPayoutMethodState(
+        configured=configured,
+        method=method if configured else None,
+        method_label=method_label(method) if configured else None,
+        masked=mask_requisites(method, card) if configured else None,
+        methods=_payout_method_options(),
+    )
+
+
+@router.put("/payout-method/me", response_model=PartnerPayoutMethodState)
+async def partner_set_payout_method(
+    body: PartnerPayoutMethodUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    identity=Depends(verify_identity_token),
+):
+    user_id, _ = await _resolve_partner_user(session, request, identity)
+    from modules.partner_program.handlers.utils import (
+        _method_enabled,
+        mask_requisites,
+        method_label,
+        validate_requisites,
+    )
+    method = body.method.strip()
+    if not _method_enabled(method):
+        raise HTTPException(status_code=400, detail="Способ вывода недоступен")
+    requisites = body.requisites.strip()
+    if not validate_requisites(method, requisites):
+        raise HTTPException(status_code=400, detail="Некорректные реквизиты для выбранного способа")
+    await session.execute(
+        text("UPDATE users SET payout_method = :m, card_number = :c WHERE id = :id"),
+        {"m": method, "c": requisites, "id": user_id},
+    )
+    return PartnerPayoutMethodState(
+        configured=True,
+        method=method,
+        method_label=method_label(method),
+        masked=mask_requisites(method, requisites),
+        methods=_payout_method_options(),
+    )
+
+
 @router.post("/payouts/me", response_model=PartnerPayoutRequestResponse)
 async def partner_create_payout_request(
     body: PartnerPayoutRequestCreate,
@@ -530,6 +607,8 @@ async def partner_create_payout_request(
         raise HTTPException(status_code=400, detail="Недостаточно средств для заявки")
     payout_method = (row[1] if row else None) or "card"
     destination = (row[2] if row else None) or None
+    if not (destination and str(destination).strip()):
+        raise HTTPException(status_code=400, detail="Сначала укажите способ вывода и реквизиты")
     inserted = (
         await session.execute(
             text(

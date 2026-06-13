@@ -99,6 +99,7 @@ HELEKET = "Heleket Crypto"
 
 PAY = "Пополнить"
 PAY_2 = "Оплатить"
+COMPLETE_PAYMENT = "Завершить оплату"
 CUSTOM_AMOUNT = "💰 Ввести свою сумму"
 STARS_BOT = "🤖 Бот для покупки звезд"
 DONAT_BUTTON = "💰 Поддержать проект"

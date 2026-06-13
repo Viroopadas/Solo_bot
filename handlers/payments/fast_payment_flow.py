@@ -21,14 +21,19 @@ from database import (
     update_coupon_usage_count,
 )
 from database.coupons import apply_percent_coupon
-from database.temporary_data import create_temporary_data
+from database.temporary_data import create_temporary_data, get_temporary_data
 from handlers import buttons as btn
 from handlers.payments.currency_flow import (
     build_currency_choice_kb,
     currency_label,
     shortfall_lead_text,
 )
-from handlers.texts import FASTFLOW_COUPON_APPLIED_TEMPLATE, FAST_PAY_CHOOSE_CURRENCY, FAST_PAY_CHOOSE_PROVIDER
+from handlers.texts import (
+    FASTFLOW_COUPON_APPLIED_TEMPLATE,
+    FAST_PAY_CHOOSE_CURRENCY,
+    FAST_PAY_CHOOSE_PROVIDER,
+    RESUME_CHECKOUT_EXPIRED,
+)
 from handlers.utils import edit_or_send_message
 from logger import logger
 from services.payments.providers import get_providers_with_hooks, sort_provider_names
@@ -248,6 +253,58 @@ async def try_fast_payment_flow(
         reply_markup=keyboard.as_markup(),
     )
     return True
+
+
+@router.callback_query(F.data == "resume_checkout")
+async def resume_checkout(callback_query: CallbackQuery, state: FSMContext, session: Any):
+    tg_id = callback_query.from_user.id
+
+    expired_markup = (
+        InlineKeyboardBuilder()
+        .row(InlineKeyboardButton(text=btn.MAIN_MENU, callback_data="profile"))
+        .as_markup()
+    )
+
+    temp = await get_temporary_data(session, tg_id)
+    if not temp or not isinstance(temp.get("data"), dict):
+        await edit_or_send_message(
+            target_message=callback_query.message,
+            text=RESUME_CHECKOUT_EXPIRED,
+            reply_markup=expired_markup,
+        )
+        await callback_query.answer()
+        return
+
+    temp_key = str(temp["state"])
+    payload = dict(temp["data"])
+
+    required_amount = payload.get("required_amount")
+    if required_amount is None:
+        price = payload.get("selected_price_rub") or payload.get("cost") or payload.get("original_price")
+        if price is not None:
+            balance = await get_balance(session, tg_id)
+            required_amount = max(0, ceil(float(price) - float(balance)))
+
+    handled = False
+    if required_amount is not None:
+        handled = await try_fast_payment_flow(
+            callback_query,
+            session,
+            state,
+            tg_id=tg_id,
+            temp_key=temp_key,
+            temp_payload=payload,
+            required_amount=int(required_amount),
+        )
+
+    if not handled:
+        await edit_or_send_message(
+            target_message=callback_query.message,
+            text=RESUME_CHECKOUT_EXPIRED,
+            reply_markup=expired_markup,
+        )
+
+    await callback_query.answer()
 
 
 @router.callback_query(F.data == "fastflow_back")

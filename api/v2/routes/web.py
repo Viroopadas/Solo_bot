@@ -31,6 +31,7 @@ from database.models import (
     WebFlowEvent,
     WebPage,
     WebPageVariant,
+    WebPageView,
     WebPageVariantBlock,
     WebTheme as WebThemeModel,
 )
@@ -94,25 +95,114 @@ def _optimize_image_bytes(data: bytes, ext: str) -> bytes:
         return data
 
 
-def _sanitize_svg(data: bytes) -> bytes:
-    import re as _re
+_SVG_NS = "http://www.w3.org/2000/svg"
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+_SVG_ALLOWED_TAGS = frozenset({
+    "svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
+    "text", "tspan", "textpath", "defs", "lineargradient", "radialgradient", "stop",
+    "clippath", "mask", "pattern", "use", "symbol", "title", "desc", "marker", "metadata",
+    "filter", "fegaussianblur", "feoffset", "feblend", "femerge", "femergenode",
+    "fecolormatrix", "fecomposite", "feflood", "femorphology", "fedropshadow",
+    "fespecularlighting", "fediffuselighting", "fepointlight", "fedistantlight",
+    "fetile", "feturbulence", "fedisplacementmap", "fecomponenttransfer",
+    "fefuncr", "fefuncg", "fefuncb", "fefunca", "switch",
+})
+_SVG_BAD_URL_SCHEMES = ("javascript:", "vbscript:", "data:text/html")
 
+
+def _svg_local(name: str) -> str:
+    return str(name).rsplit("}", 1)[-1].lower()
+
+
+def _scrub_svg_element(elem) -> None:
+    for attr in list(elem.attrib.keys()):
+        local = _svg_local(attr)
+        value = elem.attrib.get(attr) or ""
+        if local.startswith("on"):
+            del elem.attrib[attr]
+            continue
+        if local == "href":
+            clean = re.sub(r"\s", "", value).lower()
+            if any(clean.startswith(scheme.replace(" ", "")) for scheme in _SVG_BAD_URL_SCHEMES):
+                del elem.attrib[attr]
+                continue
+        if local == "style":
+            low = value.lower()
+            if "javascript:" in low or "expression(" in low or "@import" in low or "behavior:" in low:
+                del elem.attrib[attr]
+    for child in list(elem):
+        if _svg_local(child.tag) not in _SVG_ALLOWED_TAGS:
+            elem.remove(child)
+        else:
+            _scrub_svg_element(child)
+
+
+def _sanitize_svg_xml(data: bytes) -> bytes:
+    import xml.etree.ElementTree as ET
+
+    from defusedxml.ElementTree import fromstring
+
+    ET.register_namespace("", _SVG_NS)
+    ET.register_namespace("xlink", _XLINK_NS)
+    root = fromstring(data)
+    if _svg_local(root.tag) != "svg":
+        raise ValueError("not an svg root")
+    _scrub_svg_element(root)
+    return ET.tostring(root, encoding="utf-8")
+
+
+def _sanitize_svg_regex(data: bytes) -> bytes:
     text = data.decode("utf-8", errors="replace")
-    text = _re.sub(r"<script[^>]*>.*?</script>", "", text, flags=_re.DOTALL | _re.IGNORECASE)
-    text = _re.sub(r"<style[^>]*>.*?</style>", "", text, flags=_re.DOTALL | _re.IGNORECASE)
-    text = _re.sub(r"\bon\w+\s*=\s*[\"'][^\"']*[\"']", "", text, flags=_re.IGNORECASE)
-    text = _re.sub(r"\bon\w+\s*=\s*\S+", "", text, flags=_re.IGNORECASE)
-    text = _re.sub(r"(?:href|xlink:href)\s*=\s*[\"']\s*javascript:[^\"']*[\"']", "", text, flags=_re.IGNORECASE)
-    text = _re.sub(r"(?:href|xlink:href)\s*=\s*[\"']\s*data:\s*text/html[^\"']*[\"']", "", text, flags=_re.IGNORECASE)
-    text = _re.sub(r"(?:href|xlink:href)\s*=\s*[\"']\s*vbscript:[^\"']*[\"']", "", text, flags=_re.IGNORECASE)
-    text = _re.sub(r"<foreignObject[^>]*>.*?</foreignObject>", "", text, flags=_re.DOTALL | _re.IGNORECASE)
-    text = _re.sub(r"<iframe[^>]*>.*?</iframe>", "", text, flags=_re.DOTALL | _re.IGNORECASE)
-    text = _re.sub(r"<embed[^>]*>", "", text, flags=_re.IGNORECASE)
-    text = _re.sub(r"<object[^>]*>.*?</object>", "", text, flags=_re.DOTALL | _re.IGNORECASE)
+    text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"\bon\w+\s*=\s*[\"'][^\"']*[\"']", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bon\w+\s*=\s*\S+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?:href|xlink:href)\s*=\s*[\"']\s*javascript:[^\"']*[\"']", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?:href|xlink:href)\s*=\s*[\"']\s*data:\s*text/html[^\"']*[\"']", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?:href|xlink:href)\s*=\s*[\"']\s*vbscript:[^\"']*[\"']", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"<foreignObject[^>]*>.*?</foreignObject>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<iframe[^>]*>.*?</iframe>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<embed[^>]*>", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"<object[^>]*>.*?</object>", "", text, flags=re.DOTALL | re.IGNORECASE)
     return text.encode("utf-8")
 
 
+def _sanitize_svg(data: bytes) -> bytes:
+    try:
+        return _sanitize_svg_xml(data)
+    except Exception:
+        return _sanitize_svg_regex(data)
+
+
 router = APIRouter(tags=["Web"])
+
+
+async def _audit_web_admin(
+    session: AsyncSession,
+    identity,
+    action: str,
+    *,
+    entity_type: str | None = None,
+    entity_id: str | int | None = None,
+    metadata: dict | None = None,
+) -> None:
+    """Пишет действие админа над сайтом в журнал аудита (event_type=web_admin_action)."""
+    try:
+        from audit import safe_record_audit_event
+
+        await safe_record_audit_event(
+            session,
+            event_type="web_admin_action",
+            channel="api",
+            path_or_handler=action,
+            actor_identity_id=getattr(identity, "id", None),
+            actor_tg_id=getattr(identity, "tg_id", None),
+            entity_type=entity_type,
+            entity_id=entity_id,
+            metadata=metadata,
+        )
+    except Exception:
+        pass
 
 
 class WebPagesListResponse(BaseModel):
@@ -213,6 +303,7 @@ async def create_web_page(
     session.add(variant)
     await session.flush()
     await bump_site_revision(session)
+    await _audit_web_admin(session, identity, "page.create", entity_type="page", entity_id=slug)
     result = await session.execute(select(WebPage.slug).order_by(WebPage.slug))
     from_db = {row[0] for row in result.fetchall()}
     slugs = sorted(from_db | set(KNOWN_PAGE_SLUGS))
@@ -241,6 +332,7 @@ async def delete_web_page(
     await session.delete(page)
     await session.flush()
     await bump_site_revision(session)
+    await _audit_web_admin(session, identity, "page.delete", entity_type="page", entity_id=slug)
     result = await session.execute(select(WebPage.slug).order_by(WebPage.slug))
     from_db = {row[0] for row in result.fetchall()}
     slugs = sorted(from_db | set(KNOWN_PAGE_SLUGS))
@@ -319,17 +411,24 @@ async def _resolve_variant(
     session: AsyncSession,
     slug: str,
     variant_key: str | None,
+    ab_bucket: str | None = None,
 ) -> tuple[WebPageVariant, list[WebPageVariant]]:
     variants = await _ensure_page_variants(session, slug)
     desired_key = _normalize_variant_key(variant_key) if variant_key else ""
-    current = None
     if desired_key:
         current = next((variant for variant in variants if variant.variant_key == desired_key), None)
         if current is None:
             raise HTTPException(404, "Вариант страницы не найден")
-    else:
-        current = next((variant for variant in variants if variant.is_active), variants[0])
-    return current, variants
+        return current, variants
+    active = next((variant for variant in variants if variant.is_active), variants[0])
+    bucket = (ab_bucket or "").strip().lower()
+    if bucket and len(bucket) == 1 and bucket.isalpha() and len(variants) > 1:
+        idx = ord(bucket) - ord("a")
+        if idx > 0:
+            others = [variant for variant in variants if not variant.is_active]
+            if others:
+                return others[min(idx - 1, len(others) - 1)], variants
+    return active, variants
 
 
 async def _get_variant_blocks(session: AsyncSession, variant_id: str) -> list[WebBlockResponse]:
@@ -392,11 +491,12 @@ def _generate_variant_key(existing_keys: set[str], requested_key: str | None, re
 async def get_web_page(
     slug: str,
     variant: str | None = Query(default=None),
+    ab: str | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
 ):
     if not slug or len(slug) > 64 or not _SLUG_RE.match(slug):
         raise HTTPException(400, "Некорректный slug страницы")
-    current, variants = await _resolve_variant(session, slug, variant)
+    current, variants = await _resolve_variant(session, slug, variant, ab_bucket=ab)
     return await _build_page_response(session, slug, current, variants)
 
 
@@ -435,11 +535,59 @@ async def update_web_page_theme(
     current.theme_tokens = cleaned_tokens
     await session.flush()
     await bump_site_revision(session)
+    await _audit_web_admin(session, identity, "page.theme.update", entity_type="page", entity_id=slug,
+                           metadata={"variant": current.variant_key})
     return WebPageThemeResponse(
         slug=slug,
         variant_key=current.variant_key,
         tokens=dict(current.theme_tokens or {}),
     )
+
+
+class PwaIconUpdate(BaseModel):
+    url: str | None = None
+
+
+def _valid_pwa_icon_url(raw: str | None) -> str:
+    url = (raw or "").strip()
+    if not url:
+        return ""
+    prefix = "/api/web/uploads/"
+    if not url.startswith(prefix) or len(url) > 255 or ".." in url or "\\" in url:
+        raise HTTPException(400, "Недопустимый адрес иконки")
+    filename = url[len(prefix):]
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", filename):
+        raise HTTPException(400, "Недопустимый адрес иконки")
+    return url
+
+
+@router.get("/api/web/pwa-icon")
+async def get_pwa_icon(session: AsyncSession = Depends(get_session)):
+    current, _ = await _resolve_variant(session, "landing", None)
+    tokens = dict(current.theme_tokens or {})
+    url = tokens.get("pwaIconUrl")
+    return {"url": url if isinstance(url, str) and url.strip() else None}
+
+
+@router.put("/api/web/pwa-icon")
+async def set_pwa_icon(
+    body: PwaIconUpdate,
+    session: AsyncSession = Depends(get_session),
+    identity=Depends(verify_identity_admin),
+):
+    url = _valid_pwa_icon_url(body.url)
+    current, _ = await _resolve_variant(session, "landing", None)
+    tokens = dict(current.theme_tokens or {})
+    if url:
+        tokens["pwaIconUrl"] = url
+    else:
+        tokens.pop("pwaIconUrl", None)
+    current.theme_tokens = tokens
+    await session.flush()
+    await bump_site_revision(session)
+    await _audit_web_admin(session, identity, "pwa_icon.set", entity_type="setting", entity_id="pwaIconUrl",
+                           metadata={"set": bool(url)})
+    return {"url": url or None}
 
 
 @router.put("/api/web/pages/{slug}")
@@ -477,6 +625,8 @@ async def update_web_page(
 
     await session.flush()
     await bump_site_revision(session)
+    await _audit_web_admin(session, identity, "page.update", entity_type="page", entity_id=slug,
+                           metadata={"variant": current.variant_key, "blocks": len(body.blocks)})
     refreshed_variants = await _list_variants(session, slug)
     refreshed_current = next((item for item in refreshed_variants if item.id == current.id), current)
     if minimal:
@@ -549,6 +699,8 @@ async def create_web_page_variant(
         )
     await session.flush()
     await bump_site_revision(session)
+    await _audit_web_admin(session, identity, "variant.create", entity_type="page", entity_id=slug,
+                           metadata={"variant": variant_key})
 
     refreshed = await _list_variants(session, slug)
     return WebPageVariantsResponse(
@@ -578,6 +730,8 @@ async def update_web_page_variant(
         variants = await _list_variants(session, slug)
 
     await bump_site_revision(session)
+    await _audit_web_admin(session, identity, "variant.update", entity_type="page", entity_id=slug,
+                           metadata={"variant": current.variant_key, "make_active": body.make_active is True})
     active = next((item for item in variants if item.is_active), current)
     return WebPageVariantsResponse(
         slug=slug,
@@ -608,6 +762,8 @@ async def delete_web_page_variant(
         replacement_variants = await _list_variants(session, slug)
 
     await bump_site_revision(session)
+    await _audit_web_admin(session, identity, "variant.delete", entity_type="page", entity_id=slug,
+                           metadata={"variant": current.variant_key})
     current_variant_key = replacement.variant_key if replacement is not None else DEFAULT_VARIANT_KEY
     active_variant_key = next(
         (item.variant_key for item in replacement_variants if item.is_active),
@@ -723,6 +879,7 @@ def _build_to_dict(b: WebCustomElementBuild) -> dict:
     }
 
 
+@router.get("/api/web/custom-element-builds")
 @router.get("/custom-element-builds")
 async def list_custom_element_builds(
     session: AsyncSession = Depends(get_session),
@@ -733,6 +890,7 @@ async def list_custom_element_builds(
     return [_build_to_dict(b) for b in builds]
 
 
+@router.post("/api/web/custom-element-builds")
 @router.post("/custom-element-builds")
 async def create_custom_element_build(
     body: CustomElementBuildCreate,
@@ -757,6 +915,7 @@ async def create_custom_element_build(
     return _build_to_dict(build)
 
 
+@router.get("/api/web/custom-element-builds/{build_id}")
 @router.get("/custom-element-builds/{build_id}")
 async def get_custom_element_build(
     build_id: str,
@@ -769,6 +928,7 @@ async def get_custom_element_build(
     return _build_to_dict(build)
 
 
+@router.patch("/api/web/custom-element-builds/{build_id}")
 @router.patch("/custom-element-builds/{build_id}")
 async def update_custom_element_build(
     build_id: str,
@@ -794,6 +954,7 @@ async def update_custom_element_build(
     return _build_to_dict(build)
 
 
+@router.delete("/api/web/custom-element-builds/{build_id}")
 @router.delete("/custom-element-builds/{build_id}")
 async def delete_custom_element_build(
     build_id: str,
@@ -837,6 +998,7 @@ class FlowEventBatch(BaseModel):
     events: list[dict]
 
 
+@router.post("/api/web/analytics/flow-events")
 @router.post("/analytics/flow-events")
 async def ingest_flow_events(
     body: FlowEventBatch,
@@ -844,10 +1006,11 @@ async def ingest_flow_events(
     session: AsyncSession = Depends(get_session),
 ):
     try:
+        from api.v2.routes.auth._common import _client_ip
         from api.v2.routes.auth._fallback_limiter import check_and_increment
         from core.redis_cache import cache_incr_checked
 
-        ip = (request.client.host if request.client else "") or "unknown"
+        ip = _client_ip(request) or "unknown"
         count, redis_ok = await cache_incr_checked(f"analytics_rate:{ip}", 60)
         if not redis_ok:
             count = check_and_increment(f"analytics_rate:{ip}", 60, 60)
@@ -858,13 +1021,18 @@ async def ingest_flow_events(
     except Exception:
         pass
     server_identity = await _identity_from_cookie(session, request)
+    if server_identity is not None and getattr(server_identity, "is_admin", False):
+        return {"ingested": 0}
     server_authenticated = server_identity is not None
+    valid_flows = await _known_flow_ids(session)
     created = 0
     for raw in body.events[:100]:
         flow_id = str(raw.get("flowId", ""))[:64]
         node_id = str(raw.get("nodeId", ""))[:64]
         event_type = str(raw.get("eventType", ""))[:32]
         if not flow_id or not node_id or not event_type:
+            continue
+        if valid_flows and flow_id not in valid_flows:
             continue
         metadata = raw.get("collectedDataSnapshot")
         if isinstance(metadata, dict):
@@ -888,6 +1056,7 @@ async def ingest_flow_events(
     return {"ingested": created}
 
 
+@router.get("/api/web/analytics/flow-funnel/{flow_id}")
 @router.get("/analytics/flow-funnel/{flow_id}")
 async def get_flow_funnel(
     flow_id: str,
@@ -936,6 +1105,377 @@ async def get_flow_funnel(
     return {"flowId": flow_id, "days": days, "funnel": funnel}
 
 
+async def _trackable_page_slugs(session: AsyncSession) -> set[str]:
+    rows = await session.execute(
+        select(WebPageVariant.page_slug)
+        .join(WebPageVariantBlock, WebPageVariantBlock.variant_id == WebPageVariant.id)
+        .distinct()
+    )
+    return {slug for (slug,) in rows.all()} | set(KNOWN_PAGE_SLUGS)
+
+
+async def _known_flow_ids(session: AsyncSession) -> set[str]:
+    rows = await session.execute(select(WebFlow.id))
+    return {fid for (fid,) in rows.all()}
+
+
+class PageViewBatch(BaseModel):
+    views: list[dict]
+
+
+@router.post("/api/web/analytics/page-views")
+@router.post("/analytics/page-views")
+async def ingest_page_views(
+    body: PageViewBatch,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        from api.v2.routes.auth._common import _client_ip
+        from api.v2.routes.auth._fallback_limiter import check_and_increment
+        from core.redis_cache import cache_incr_checked
+
+        ip = _client_ip(request) or "unknown"
+        count, redis_ok = await cache_incr_checked(f"analytics_pv_rate:{ip}", 60)
+        if not redis_ok:
+            count = check_and_increment(f"analytics_pv_rate:{ip}", 60, 120)
+        if count > 120:
+            raise HTTPException(status_code=429, detail="Too many events")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    server_identity = await _identity_from_cookie(session, request)
+    if server_identity is not None and getattr(server_identity, "is_admin", False):
+        return {"ingested": 0}
+    server_authenticated = server_identity is not None
+    valid_slugs = await _trackable_page_slugs(session)
+    created = 0
+    for raw in body.views[:50]:
+        visitor_id = str(raw.get("visitorId", ""))[:36].strip()
+        page_slug = str(raw.get("pageSlug", ""))[:64].strip()
+        if not visitor_id or not page_slug or page_slug not in valid_slugs:
+            continue
+        pv = WebPageView(
+            id=str(uuid.uuid4()),
+            visitor_id=visitor_id,
+            page_slug=page_slug,
+            referrer=(str(raw.get("referrer"))[:255] if raw.get("referrer") else None),
+            utm_source=(str(raw.get("utmSource"))[:64] if raw.get("utmSource") else None),
+            utm_medium=(str(raw.get("utmMedium"))[:64] if raw.get("utmMedium") else None),
+            utm_campaign=(str(raw.get("utmCampaign"))[:64] if raw.get("utmCampaign") else None),
+            device=(str(raw.get("device"))[:16] if raw.get("device") else None),
+            locale=(str(raw.get("locale"))[:8] if raw.get("locale") else None),
+            authenticated=server_authenticated,
+            source=("webapp" if str(raw.get("source") or "").strip().lower() == "webapp" else "web"),
+            ab_variant=(str(raw.get("abVariant"))[:16] if raw.get("abVariant") else None),
+        )
+        session.add(pv)
+        created += 1
+    return {"ingested": created}
+
+
+@router.delete("/api/web/analytics/page-views")
+@router.delete("/analytics/page-views")
+async def reset_analytics_page_views(
+    session: AsyncSession = Depends(get_session),
+    _identity=Depends(verify_identity_admin),
+):
+    """Очищает накопленные просмотры страниц (тестовые/девелоперские данные).
+
+    Удаляет только web_page_views — реальные регистрации/платежи не трогаются.
+    """
+    result = await session.execute(delete(WebPageView))
+    await _audit_web_admin(session, _identity, "analytics.reset", entity_type="analytics", entity_id="page_views",
+                           metadata={"deleted": int(result.rowcount or 0)})
+    return {"deleted": int(result.rowcount or 0)}
+
+
+@router.get("/api/web/analytics/overview")
+@router.get("/analytics/overview")
+async def get_analytics_overview(
+    days: int = Query(default=30, ge=1, le=365),
+    session: AsyncSession = Depends(get_session),
+    _identity=Depends(verify_identity_admin),
+):
+    from database.models import Identity, Key, Payment
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since_naive = since.replace(tzinfo=None)
+
+    day_col = func.date_trunc("day", WebPageView.created_at).label("day")
+    daily_rows = (
+        await session.execute(
+            select(
+                day_col,
+                func.count().label("views"),
+                func.count(func.distinct(WebPageView.visitor_id)).label("visitors"),
+            )
+            .where(WebPageView.created_at >= since)
+            .group_by(day_col)
+            .order_by(day_col)
+        )
+    ).all()
+
+    totals_row = (
+        await session.execute(
+            select(
+                func.count().label("views"),
+                func.count(func.distinct(WebPageView.visitor_id)).label("visitors"),
+            ).where(WebPageView.created_at >= since)
+        )
+    ).first()
+
+    source_rows = (
+        await session.execute(
+            select(
+                WebPageView.source,
+                func.count().label("views"),
+                func.count(func.distinct(WebPageView.visitor_id)).label("visitors"),
+            )
+            .where(WebPageView.created_at >= since)
+            .group_by(WebPageView.source)
+        )
+    ).all()
+    src_split = {"webapp": {"views": 0, "visitors": 0}, "web": {"views": 0, "visitors": 0}}
+    for s_row in source_rows:
+        key = "webapp" if (s_row.source == "webapp") else "web"
+        src_split[key]["views"] += int(s_row.views or 0)
+        src_split[key]["visitors"] += int(s_row.visitors or 0)
+
+    daily_src_rows = (
+        await session.execute(
+            select(
+                day_col,
+                WebPageView.source,
+                func.count().label("views"),
+                func.count(func.distinct(WebPageView.visitor_id)).label("visitors"),
+            )
+            .where(WebPageView.created_at >= since)
+            .group_by(day_col, WebPageView.source)
+            .order_by(day_col)
+        )
+    ).all()
+    daily_web: dict[str, dict[str, int]] = {}
+    daily_webapp: dict[str, dict[str, int]] = {}
+    for d_row in daily_src_rows:
+        d_key = d_row.day.strftime("%Y-%m-%d")
+        bucket = daily_webapp if (d_row.source == "webapp") else daily_web
+        cur = bucket.setdefault(d_key, {"views": 0, "visitors": 0})
+        cur["views"] += int(d_row.views or 0)
+        cur["visitors"] += int(d_row.visitors or 0)
+
+    top_pages = (
+        await session.execute(
+            select(
+                WebPageView.page_slug,
+                func.count().label("views"),
+                func.count(func.distinct(WebPageView.visitor_id)).label("visitors"),
+            )
+            .where(WebPageView.created_at >= since)
+            .group_by(WebPageView.page_slug)
+            .order_by(func.count().desc())
+            .limit(10)
+        )
+    ).all()
+
+    referrers = (
+        await session.execute(
+            select(
+                WebPageView.referrer,
+                func.count(func.distinct(WebPageView.visitor_id)).label("visitors"),
+            )
+            .where(WebPageView.created_at >= since)
+            .where(WebPageView.referrer.isnot(None))
+            .group_by(WebPageView.referrer)
+            .order_by(func.count(func.distinct(WebPageView.visitor_id)).desc())
+            .limit(10)
+        )
+    ).all()
+
+    devices = (
+        await session.execute(
+            select(
+                WebPageView.device,
+                func.count(func.distinct(WebPageView.visitor_id)).label("visitors"),
+            )
+            .where(WebPageView.created_at >= since)
+            .group_by(WebPageView.device)
+            .order_by(func.count(func.distinct(WebPageView.visitor_id)).desc())
+        )
+    ).all()
+
+    ab_rows = (
+        await session.execute(
+            select(
+                WebPageView.ab_variant,
+                func.count().label("views"),
+                func.count(func.distinct(WebPageView.visitor_id)).label("visitors"),
+            )
+            .where(WebPageView.created_at >= since)
+            .where(WebPageView.ab_variant.isnot(None))
+            .group_by(WebPageView.ab_variant)
+            .order_by(WebPageView.ab_variant)
+        )
+    ).all()
+    ab_checkout = dict(
+        (
+            await session.execute(
+                select(WebPageView.ab_variant, func.count(func.distinct(WebPageView.visitor_id)))
+                .where(WebPageView.created_at >= since)
+                .where(WebPageView.page_slug == "checkout")
+                .where(WebPageView.ab_variant.isnot(None))
+                .group_by(WebPageView.ab_variant)
+            )
+        ).all()
+    )
+
+    checkout_visitors = (
+        await session.scalar(
+            select(func.count(func.distinct(WebPageView.visitor_id)))
+            .where(WebPageView.created_at >= since)
+            .where(WebPageView.page_slug == "checkout")
+        )
+    ) or 0
+
+    registrations = (
+        await session.scalar(
+            select(func.count()).select_from(Identity).where(Identity.created_at >= since_naive)
+        )
+    ) or 0
+
+    web_payment_marker = Payment.metadata_["payment_flow"].astext.isnot(None)
+    payments_row = (
+        await session.execute(
+            select(
+                func.count().label("cnt"),
+                func.count(func.distinct(Payment.user_id)).label("payers"),
+                func.coalesce(func.sum(Payment.amount), 0).label("revenue"),
+            )
+            .where(Payment.created_at >= since_naive)
+            .where(Payment.status == "success")
+            .where(web_payment_marker)
+        )
+    ).first()
+
+    all_payments_row = (
+        await session.execute(
+            select(
+                func.count().label("cnt"),
+                func.coalesce(func.sum(Payment.amount), 0).label("revenue"),
+            )
+            .where(Payment.created_at >= since_naive)
+            .where(Payment.status == "success")
+        )
+    ).first()
+
+    active_keys = (
+        await session.scalar(
+            select(func.count()).select_from(Key).where(
+                Key.expiry_time > int(datetime.now(timezone.utc).timestamp() * 1000)
+            )
+        )
+    ) or 0
+
+    reg_day_col = func.date_trunc("day", Identity.created_at).label("day")
+    daily_reg_rows = (
+        await session.execute(
+            select(reg_day_col, func.count().label("cnt"))
+            .where(Identity.created_at >= since_naive)
+            .group_by(reg_day_col)
+            .order_by(reg_day_col)
+        )
+    ).all()
+
+    pay_day_col = func.date_trunc("day", Payment.created_at).label("day")
+    daily_pay_rows = (
+        await session.execute(
+            select(
+                pay_day_col,
+                func.count().label("cnt"),
+                func.coalesce(func.sum(Payment.amount), 0).label("revenue"),
+                func.count().filter(web_payment_marker).label("site_cnt"),
+                func.coalesce(func.sum(Payment.amount).filter(web_payment_marker), 0).label("site_revenue"),
+            )
+            .where(Payment.created_at >= since_naive)
+            .where(Payment.status == "success")
+            .group_by(pay_day_col)
+            .order_by(pay_day_col)
+        )
+    ).all()
+
+    return {
+        "days": days,
+        "totals": {
+            "views": int(totals_row.views or 0) if totals_row else 0,
+            "visitors": int(totals_row.visitors or 0) if totals_row else 0,
+            "viewsWeb": src_split["web"]["views"],
+            "viewsWebapp": src_split["webapp"]["views"],
+            "visitorsWeb": src_split["web"]["visitors"],
+            "visitorsWebapp": src_split["webapp"]["visitors"],
+            "registrations": int(registrations),
+            "checkoutVisitors": int(checkout_visitors),
+            "payments": int(payments_row.cnt or 0) if payments_row else 0,
+            "payers": int(payments_row.payers or 0) if payments_row else 0,
+            "revenueRub": float(payments_row.revenue or 0) if payments_row else 0.0,
+            "totalPayments": int(all_payments_row.cnt or 0) if all_payments_row else 0,
+            "totalRevenueRub": float(all_payments_row.revenue or 0) if all_payments_row else 0.0,
+            "activeKeys": int(active_keys),
+        },
+        "daily": [
+            {
+                "date": row.day.strftime("%Y-%m-%d"),
+                "views": int(row.views),
+                "visitors": int(row.visitors),
+            }
+            for row in daily_rows
+        ],
+        "dailyWeb": [
+            {"date": d, "views": v["views"], "visitors": v["visitors"]}
+            for d, v in sorted(daily_web.items())
+        ],
+        "dailyWebapp": [
+            {"date": d, "views": v["views"], "visitors": v["visitors"]}
+            for d, v in sorted(daily_webapp.items())
+        ],
+        "dailyRegistrations": [
+            {"date": row.day.strftime("%Y-%m-%d"), "count": int(row.cnt)}
+            for row in daily_reg_rows
+        ],
+        "dailyPayments": [
+            {
+                "date": row.day.strftime("%Y-%m-%d"),
+                "payments": int(row.cnt),
+                "revenueRub": float(row.revenue or 0),
+                "sitePayments": int(row.site_cnt or 0),
+                "siteRevenueRub": float(row.site_revenue or 0),
+            }
+            for row in daily_pay_rows
+        ],
+        "topPages": [
+            {"slug": row.page_slug, "views": int(row.views), "visitors": int(row.visitors)}
+            for row in top_pages
+        ],
+        "referrers": [
+            {"source": row.referrer, "visitors": int(row.visitors)}
+            for row in referrers
+        ],
+        "devices": [
+            {"device": row.device or "unknown", "visitors": int(row.visitors)}
+            for row in devices
+        ],
+        "abVariants": [
+            {
+                "variant": row.ab_variant,
+                "views": int(row.views),
+                "visitors": int(row.visitors),
+                "checkoutVisitors": int(ab_checkout.get(row.ab_variant, 0) or 0),
+            }
+            for row in ab_rows
+        ],
+    }
+
+
 # ── Error aggregation (in-house Sentry) ──
 
 
@@ -982,6 +1522,42 @@ class ErrorReportIngest(BaseModel):
     context: dict | None = None
 
 
+_ERROR_ALERT_THRESHOLDS = frozenset({10, 50, 200, 1000})
+_NEW_ERROR_ALERTS_PER_HOUR = 6
+
+
+async def _alert_web_error(name: str, message: str, url: str | None, count: int, is_new: bool) -> None:
+    """Шлёт админам уведомление о новой ошибке сайта или о всплеске по счётчику.
+    Новые ошибки троттлятся глобально, чтобы не заспамить при запуске."""
+    try:
+        if is_new:
+            try:
+                from api.v2.routes.auth._fallback_limiter import check_and_increment
+                from core.redis_cache import cache_incr_checked
+
+                fired, redis_ok = await cache_incr_checked("web_err_new_alert:hour", 3600)
+                if not redis_ok:
+                    fired = check_and_increment("web_err_new_alert:hour", _NEW_ERROR_ALERTS_PER_HOUR, 3600)
+                if fired > _NEW_ERROR_ALERTS_PER_HOUR:
+                    return
+            except Exception:
+                pass
+
+        head = "🆕 Новая ошибка сайта" if is_new else f"📈 Всплеск ошибки сайта (×{count})"
+        parts = [head, f"{(name or 'Error')[:120]}: {(message or '')[:300]}"]
+        if url:
+            parts.append(f"URL: {url[:200]}")
+        if not is_new:
+            parts.append(f"Всего повторов: {count}")
+        parts.append("Подробнее — в админ-панели → Логи и здоровье → ошибки.")
+        from services.admin_alert import send_admin_alert
+
+        await send_admin_alert("\n".join(parts))
+    except Exception as exc:
+        logger.warning("[WebErrorAlert] не удалось отправить алерт: {}", exc)
+
+
+@router.post("/api/web/error-reports")
 @router.post("/error-reports")
 async def ingest_error_report(
     body: ErrorReportIngest,
@@ -989,10 +1565,11 @@ async def ingest_error_report(
     session: AsyncSession = Depends(get_session),
 ):
     try:
+        from api.v2.routes.auth._common import _client_ip
         from api.v2.routes.auth._fallback_limiter import check_and_increment
         from core.redis_cache import cache_incr_checked
 
-        ip = (request.client.host if request.client else "") or "unknown"
+        ip = _client_ip(request) or "unknown"
         count, redis_ok = await cache_incr_checked(f"error_report_rate:{ip}", 60)
         if not redis_ok:
             count = check_and_increment(f"error_report_rate:{ip}", 30, 60)
@@ -1026,13 +1603,16 @@ async def ingest_error_report(
             existing.last_context = safe_context
         if server_identity_id:
             existing.last_identity_id = server_identity_id[:36]
+        if existing.count in _ERROR_ALERT_THRESHOLDS:
+            await _alert_web_error(existing.error_name, existing.error_message, existing.url, existing.count, is_new=False)
         return {"ok": True, "id": existing.id, "count": existing.count, "deduplicated": True}
 
     try:
+        from api.v2.routes.auth._common import _client_ip
         from api.v2.routes.auth._fallback_limiter import check_and_increment as _sig_check
         from core.redis_cache import cache_incr_checked as _sig_cache
 
-        ip = (request.client.host if request.client else "") or "unknown"
+        ip = _client_ip(request) or "unknown"
         unique_key = f"error_sig_unique:{ip}"
         count_uniq, redis_ok = await _sig_cache(unique_key, 3600)
         if not redis_ok:
@@ -1059,9 +1639,11 @@ async def ingest_error_report(
         resolved=False,
     )
     session.add(report)
+    await _alert_web_error(report.error_name, report.error_message, report.url, 1, is_new=True)
     return {"ok": True, "id": report.id, "count": 1, "deduplicated": False}
 
 
+@router.get("/api/web/error-reports")
 @router.get("/error-reports")
 async def list_error_reports(
     session: AsyncSession = Depends(get_session),
@@ -1100,6 +1682,7 @@ class ErrorReportPatch(BaseModel):
     resolved: bool | None = None
 
 
+@router.patch("/api/web/error-reports/{report_id}")
 @router.patch("/error-reports/{report_id}")
 async def update_error_report(
     report_id: str,
@@ -1115,6 +1698,7 @@ async def update_error_report(
     return {"ok": True, "resolved": report.resolved}
 
 
+@router.delete("/api/web/error-reports/{report_id}")
 @router.delete("/error-reports/{report_id}")
 async def delete_error_report(
     report_id: str,
@@ -1126,3 +1710,159 @@ async def delete_error_report(
         raise HTTPException(404, "Not found")
     await session.delete(report)
     return {"ok": True}
+
+
+@router.post("/api/web/install-default-design")
+async def install_default_design(
+    session: AsyncSession = Depends(get_session),
+    _identity=Depends(verify_identity_admin),
+):
+    from database.web_default_seed import seed_default_site
+
+    try:
+        seeded = await seed_default_site(session, force=True)
+        await session.flush()
+    except Exception as e:
+        logger.exception("[install_default_design] seed_default_site упал: %s", e)
+        raise HTTPException(status_code=500, detail=f"install_default_design: {type(e).__name__}: {e}")
+    await bump_site_revision(session)
+    await _audit_web_admin(session, _identity, "design.install_default", entity_type="site", entity_id="default")
+    return {"ok": True, "seeded": seeded}
+
+
+@router.get("/api/web/admin-audit")
+async def web_admin_audit(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    _identity=Depends(verify_identity_admin),
+):
+    """Журнал действий админов над сайтом (event_type=web_admin_action)."""
+    from database.models import Identity
+    from database.models.audit import AuditEvent
+
+    base = AuditEvent.event_type == "web_admin_action"
+    total = await session.scalar(select(func.count()).select_from(AuditEvent).where(base))
+    rows = (
+        await session.execute(
+            select(AuditEvent)
+            .where(base)
+            .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+    ).scalars().all()
+
+    ident_ids = {r.actor_identity_id for r in rows if r.actor_identity_id}
+    emails: dict[str, str | None] = {}
+    if ident_ids:
+        eres = await session.execute(select(Identity.id, Identity.email).where(Identity.id.in_(ident_ids)))
+        emails = {iid: email for (iid, email) in eres.all()}
+
+    items = [
+        {
+            "id": r.id,
+            "action": r.path_or_handler,
+            "entity_type": r.entity_type,
+            "entity_id": r.entity_id,
+            "result": r.result,
+            "actor_email": emails.get(r.actor_identity_id),
+            "actor_tg_id": r.actor_tg_id,
+            "metadata": r.metadata_,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+    return {"total": int(total or 0), "items": items}
+
+
+
+_BOT_LOG_PATH = Path("logs/logging.log")
+_SITE_LOG_PATH = Path("web-app/logs/web.log")
+_LEVEL_RANK = {"DEBUG": 0, "TRACE": 0, "INFO": 1, "SUCCESS": 1, "WARNING": 2, "ERROR": 3, "CRITICAL": 4}
+
+
+def _tail_lines(path: Path, max_lines: int) -> list[str]:
+    try:
+        if not path.exists():
+            return []
+        size = path.stat().st_size
+        chunk = min(size, 512 * 1024)
+        with path.open("rb") as f:
+            if chunk < size:
+                f.seek(size - chunk)
+            data = f.read()
+        lines = data.decode("utf-8", errors="replace").splitlines()
+        if chunk < size and lines:
+            lines = lines[1:]
+        return lines[-max_lines:]
+    except Exception:
+        return []
+
+
+def _parse_log_line(raw: str) -> dict:
+    parts = raw.split(" | ", 3)
+    if len(parts) >= 3 and parts[1].strip().upper() in _LEVEL_RANK:
+        ts = parts[0].strip()
+        level = parts[1].strip().upper()
+        loc = parts[2].strip() if len(parts) == 4 else ""
+        msg = (parts[3] if len(parts) == 4 else parts[2]).strip()
+        return {"ts": ts, "level": level, "loc": loc, "text": msg}
+    up = raw.upper()
+    level = "INFO"
+    for token, mapped in (("CRITICAL", "CRITICAL"), ("ERROR", "ERROR"), ("WARNING", "WARNING"), ("WARN", "WARNING"), ("DEBUG", "DEBUG")):
+        if token in up:
+            level = mapped
+            break
+    return {"ts": "", "level": level, "loc": "", "text": raw.strip()}
+
+
+def _is_api_log(entry: dict) -> bool:
+    return "[API]" in (entry.get("text") or "") or "log_api_access" in (entry.get("loc") or "")
+
+
+@router.get("/api/web/logs")
+@router.get("/logs")
+async def get_logs(
+    source: str = Query("bot"),
+    limit: int = Query(200, ge=1, le=1000),
+    level: str = Query("all"),
+    _identity=Depends(verify_identity_admin),
+):
+    path = _SITE_LOG_PATH if source == "site" else _BOT_LOG_PATH
+    read_mult = 6 if source in ("api", "bot") else 3
+    raw_lines = _tail_lines(path, min(limit * read_mult, 6000))
+    entries = [_parse_log_line(line) for line in raw_lines if line.strip()]
+    if source == "api":
+        entries = [e for e in entries if _is_api_log(e)]
+    elif source == "bot":
+        entries = [e for e in entries if not _is_api_log(e)]
+    min_rank = {"warn": 2, "error": 3}.get(level, 0)
+    if min_rank:
+        entries = [e for e in entries if _LEVEL_RANK.get(e["level"], 1) >= min_rank]
+    return {"source": source, "available": path.exists(), "entries": entries[-limit:]}
+
+
+@router.get("/api/web/logs/health")
+@router.get("/logs/health")
+async def get_logs_health(_identity=Depends(verify_identity_admin)):
+    out: dict = {}
+
+    def _count(entries: list[dict]) -> dict:
+        errors = warnings = 0
+        for e in entries:
+            rank = _LEVEL_RANK.get(e["level"], 1)
+            if rank >= 3:
+                errors += 1
+            elif rank == 2:
+                warnings += 1
+        return {"errors": errors, "warnings": warnings, "lines": len(entries)}
+
+    bot_lines = [_parse_log_line(line) for line in _tail_lines(_BOT_LOG_PATH, 500) if line.strip()]
+    bot_available = _BOT_LOG_PATH.exists()
+    out["api"] = {"available": bot_available, **_count([e for e in bot_lines if _is_api_log(e)])}
+    out["bot"] = {"available": bot_available, **_count([e for e in bot_lines if not _is_api_log(e)])}
+
+    site_lines = [_parse_log_line(line) for line in _tail_lines(_SITE_LOG_PATH, 500) if line.strip()]
+    out["site"] = {"available": _SITE_LOG_PATH.exists(), **_count(site_lines)}
+    return out

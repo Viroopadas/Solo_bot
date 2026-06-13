@@ -1450,6 +1450,103 @@ async def _migration_v32_add_polls(conn: AsyncConnection) -> None:
         )
 
 
+async def _migration_v33_web_page_views(conn: AsyncConnection) -> None:
+    logger.info("[schema_upgrade] v33: таблица web_page_views")
+
+    await _exec_ignore(
+        conn,
+        """
+        CREATE TABLE IF NOT EXISTS web_page_views (
+            id VARCHAR(36) PRIMARY KEY,
+            visitor_id VARCHAR(36) NOT NULL,
+            page_slug VARCHAR(64) NOT NULL,
+            referrer VARCHAR(255),
+            utm_source VARCHAR(64),
+            utm_medium VARCHAR(64),
+            utm_campaign VARCHAR(64),
+            device VARCHAR(16),
+            locale VARCHAR(8),
+            authenticated BOOLEAN,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    )
+    await _exec_ignore(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_web_page_views_created ON web_page_views (created_at)",
+    )
+    await _exec_ignore(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_web_page_views_slug_created ON web_page_views (page_slug, created_at)",
+    )
+    await _exec_ignore(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_web_page_views_visitor ON web_page_views (visitor_id)",
+    )
+
+
+async def _migration_v34_web_page_views_source(conn: AsyncConnection) -> None:
+    logger.info("[schema_upgrade] v34: web_page_views.source (web/webapp)")
+    if not await _table_exists(conn, "web_page_views"):
+        return
+    if not await _column_exists(conn, "web_page_views", "source"):
+        await _exec_ignore(conn, "ALTER TABLE web_page_views ADD COLUMN source VARCHAR(16)")
+
+
+async def _migration_v36_web_page_views_ab_variant(conn: AsyncConnection) -> None:
+    logger.info("[schema_upgrade] v36: web_page_views.ab_variant (A/B)")
+    if not await _table_exists(conn, "web_page_views"):
+        return
+    if not await _column_exists(conn, "web_page_views", "ab_variant"):
+        await _exec_ignore(conn, "ALTER TABLE web_page_views ADD COLUMN ab_variant VARCHAR(16)")
+
+
+async def _migration_v37_rate_limit_counters(conn: AsyncConnection) -> None:
+    logger.info("[schema_upgrade] v37: таблица rate_limit_counters (распределённый fallback)")
+    await _exec_ignore(
+        conn,
+        """
+        CREATE TABLE IF NOT EXISTS rate_limit_counters (
+            bucket VARCHAR(255) NOT NULL,
+            window_start BIGINT NOT NULL,
+            count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (bucket, window_start)
+        )
+        """,
+    )
+    await _exec_ignore(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_rate_limit_counters_window ON rate_limit_counters (window_start)",
+    )
+
+
+async def _migration_v35_key_traffic_history(conn: AsyncConnection) -> None:
+    logger.info("[schema_upgrade] v35: таблица key_traffic_history (история использования)")
+    await _exec_ignore(
+        conn,
+        """
+        CREATE TABLE IF NOT EXISTS key_traffic_history (
+            id SERIAL PRIMARY KEY,
+            client_id VARCHAR(128) NOT NULL,
+            tg_id BIGINT,
+            used_gb DOUBLE PRECISION,
+            limit_gb DOUBLE PRECISION,
+            snapshot_date DATE NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_key_traffic_history_client_date UNIQUE (client_id, snapshot_date)
+        )
+        """,
+    )
+    await _exec_ignore(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_key_traffic_history_client_date ON key_traffic_history (client_id, snapshot_date)",
+    )
+    await _exec_ignore(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_key_traffic_history_date ON key_traffic_history (snapshot_date)",
+    )
+
+
 _MIGRATIONS = [
     (1, "Добавление users.id", _migration_v1_add_users_id),
     (2, "Добавление user_id колонок", _migration_v2_add_user_id_columns),
@@ -1483,6 +1580,11 @@ _MIGRATIONS = [
     (30, "индекс users(created_at)", _migration_v30_add_users_created_at_index),
     (31, "Repair NULL tg_id mirrors", _migration_v31_repair_tg_mirror_nulls),
     (32, "Таблицы опросов (polls/poll_messages/poll_votes)", _migration_v32_add_polls),
+    (33, "Таблица web_page_views (аналитика посещений)", _migration_v33_web_page_views),
+    (34, "web_page_views.source (web/webapp)", _migration_v34_web_page_views_source),
+    (35, "Таблица key_traffic_history (история трафика)", _migration_v35_key_traffic_history),
+    (36, "web_page_views.ab_variant (A/B)", _migration_v36_web_page_views_ab_variant),
+    (37, "Таблица rate_limit_counters (распределённый fallback лимитера)", _migration_v37_rate_limit_counters),
 ]
 
 

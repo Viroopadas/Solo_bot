@@ -86,6 +86,15 @@ async def read_all_notifications(
     return {"ok": True, "updated": count}
 
 
+@router.delete("/notifications", tags=["Notifications"])
+async def delete_all_notifications(
+    session: AsyncSession = Depends(get_session),
+    identity: Identity = Depends(verify_identity_token),
+):
+    count = await wn_db.delete_all_for_identity(session, identity.id)
+    return {"ok": True, "deleted": count}
+
+
 @router.post("/notifications/{notification_id}/read", tags=["Notifications"])
 async def read_one_notification(
     notification_id: str = Path(..., min_length=1, max_length=64),

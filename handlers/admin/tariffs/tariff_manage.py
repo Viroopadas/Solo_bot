@@ -207,9 +207,14 @@ async def select_vless_creation(callback: CallbackQuery, state: FSMContext, sess
         },
     )
 
+    from .tariff_utils import check_tariff_price_monotonicity, format_price_monotonicity_warning
+
+    warn_block = format_price_monotonicity_warning(await check_tariff_price_monotonicity(session, new_tariff))
+
     await state.set_state(TariffCreateState.confirm_more)
     await callback.message.edit_text(
-        f"✅ Тариф <b>{new_tariff.name}</b> добавлен в группу <code>{data['group_code']}</code>.\n\n"
+        f"✅ Тариф <b>{new_tariff.name}</b> добавлен в группу <code>{data['group_code']}</code>."
+        f"{warn_block}\n\n"
         "➕ Хотите добавить ещё один тариф в эту группу?",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
@@ -564,6 +569,10 @@ async def apply_edit(message: Message, state: FSMContext, session: AsyncSession)
     await state.clear()
 
     text, markup = render_tariff_card(tariff)
+    if field in ["duration_days", "price_rub", "traffic_limit", "device_limit"]:
+        from .tariff_utils import check_tariff_price_monotonicity, format_price_monotonicity_warning
+
+        text += format_price_monotonicity_warning(await check_tariff_price_monotonicity(session, tariff))
     await message.answer(text=text, reply_markup=markup)
 
 
