@@ -2900,5 +2900,896 @@
     "monoFontFamily": ""
    }
   }
+ ],
+ "_flows": [
+  {
+   "id": "onboarding",
+   "name": "Онбординг",
+   "entry_node_id": "n-welcome",
+   "nodes": [
+    {
+     "id": "n-welcome",
+     "type": "custom",
+     "label": "Добро пожаловать",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 0
+     },
+     "page_slug": null,
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-location",
+     "type": "locationSelect",
+     "label": "Выбор локации",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 160
+     },
+     "page_slug": null,
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-tariff",
+     "type": "selectTariff",
+     "label": "Выбор тарифа",
+     "config": {
+      "displayMode": "grid"
+     },
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 320
+     },
+     "page_slug": null,
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-payment",
+     "type": "payment",
+     "label": "Оплата",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 480
+     },
+     "page_slug": null,
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-setup",
+     "type": "setupInstruction",
+     "label": "Подключение",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 640
+     },
+     "page_slug": null,
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    }
+   ],
+   "edges": [
+    {
+     "id": "e-1",
+     "label": null,
+     "source": "n-welcome",
+     "target": "n-location",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "e-2",
+     "label": null,
+     "source": "n-location",
+     "target": "n-tariff",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "e-3",
+     "label": null,
+     "source": "n-tariff",
+     "target": "n-payment",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "e-4",
+     "label": null,
+     "source": "n-payment",
+     "target": "n-setup",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    }
+   ]
+  },
+  {
+   "id": "trial",
+   "name": "Пробная подписка",
+   "entry_node_id": "n-landing",
+   "nodes": [
+    {
+     "id": "n-landing",
+     "type": "landing",
+     "label": "Лендинг",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 0
+     },
+     "page_slug": "landing",
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-auth",
+     "type": "auth",
+     "label": "Авторизация",
+     "config": {
+      "skippable": true,
+      "autoAdvanceIfSingle": true
+     },
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 180
+     },
+     "page_slug": "login",
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": {
+      "field": "authenticated",
+      "operator": "truthy"
+     },
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-trial-action",
+     "type": "action",
+     "label": "Активировать пробник",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 360
+     },
+     "page_slug": null,
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": {
+      "params": {},
+      "action_type": "activate-trial"
+     }
+    },
+    {
+     "id": "n-setup",
+     "type": "setupInstruction",
+     "label": "Подключение",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 140,
+      "y": 540
+     },
+     "page_slug": "dashboard-instructions",
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": {
+      "field": "startedAuthenticated",
+      "operator": "truthy"
+     },
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-profile",
+     "type": "profile",
+     "label": "Кабинет",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 460,
+      "y": 540
+     },
+     "page_slug": "dashboard",
+     "screen_id": null,
+     "cabinet_tab": "keys",
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    }
+   ],
+   "edges": [
+    {
+     "id": "e-landing-auth",
+     "label": null,
+     "source": "n-landing",
+     "target": "n-auth",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "e-auth-action",
+     "label": null,
+     "source": "n-auth",
+     "target": "n-trial-action",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "e-action-setup",
+     "label": "активирован",
+     "source": "n-trial-action",
+     "target": "n-setup",
+     "priority": 1,
+     "condition": {
+      "field": "flowLastActionOk",
+      "operator": "truthy"
+     },
+     "condition_group": null
+    },
+    {
+     "id": "e-action-profile",
+     "label": "fallback",
+     "source": "n-trial-action",
+     "target": "n-profile",
+     "priority": 2,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "e-setup-profile",
+     "label": null,
+     "source": "n-setup",
+     "target": "n-profile",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    }
+   ]
+  },
+  {
+   "id": "guest-purchase",
+   "name": "Покупка гостем",
+   "entry_node_id": "n-landing",
+   "nodes": [
+    {
+     "id": "n-landing",
+     "type": "landing",
+     "label": "Лендинг",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 0
+     },
+     "page_slug": "landing",
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-tariff",
+     "type": "selectTariff",
+     "label": "Выбор тарифа",
+     "config": {
+      "displayMode": "grid"
+     },
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 160
+     },
+     "page_slug": "tariffs",
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": {
+      "field": "selectedTariffId",
+      "operator": "truthy"
+     },
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-auth",
+     "type": "auth",
+     "label": "Авторизация",
+     "config": {
+      "skippable": true,
+      "autoAdvanceIfSingle": true
+     },
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 320
+     },
+     "page_slug": "login",
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": {
+      "field": "authenticated",
+      "operator": "truthy"
+     },
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-payment",
+     "type": "payment",
+     "label": "Оплата",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 480
+     },
+     "page_slug": "checkout",
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-setup",
+     "type": "setupInstruction",
+     "label": "Подключение",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 640
+     },
+     "page_slug": "dashboard-instructions",
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    }
+   ],
+   "edges": [
+    {
+     "id": "e-1",
+     "label": null,
+     "source": "n-landing",
+     "target": "n-tariff",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "e-2",
+     "label": null,
+     "source": "n-tariff",
+     "target": "n-auth",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "e-3",
+     "label": null,
+     "source": "n-auth",
+     "target": "n-payment",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "e-4",
+     "label": null,
+     "source": "n-payment",
+     "target": "n-setup",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    }
+   ]
+  },
+  {
+   "id": "renew",
+   "name": "Продление подписки",
+   "entry_node_id": "n-payment",
+   "nodes": [
+    {
+     "id": "n-payment",
+     "type": "payment",
+     "label": "Оплата продления",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 0
+     },
+     "page_slug": "checkout",
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-done",
+     "type": "profile",
+     "label": "Подписки",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 160
+     },
+     "page_slug": "dashboard",
+     "screen_id": null,
+     "cabinet_tab": "keys",
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    }
+   ],
+   "edges": [
+    {
+     "id": "e-1",
+     "label": null,
+     "source": "n-payment",
+     "target": "n-done",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    }
+   ]
+  },
+  {
+   "id": "default",
+   "name": "Основной flow",
+   "entry_node_id": "node-landing",
+   "nodes": [
+    {
+     "id": "node-landing",
+     "type": "landing",
+     "label": "Лендинг",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 0
+     },
+     "page_slug": null,
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "node-tariff",
+     "type": "selectTariff",
+     "label": "Выбор тарифа",
+     "config": {
+      "displayMode": "grid"
+     },
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 180
+     },
+     "page_slug": null,
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "node-auth",
+     "type": "auth",
+     "label": "Авторизация",
+     "config": {
+      "skippable": false
+     },
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 360
+     },
+     "page_slug": null,
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "node-payment",
+     "type": "payment",
+     "label": "Оплата",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 540
+     },
+     "page_slug": null,
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "node-setup",
+     "type": "setupInstruction",
+     "label": "Инструкция",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 720
+     },
+     "page_slug": null,
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    }
+   ],
+   "edges": [
+    {
+     "id": "edge-1",
+     "label": null,
+     "source": "node-landing",
+     "target": "node-tariff",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "edge-2",
+     "label": null,
+     "source": "node-tariff",
+     "target": "node-auth",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "edge-3",
+     "label": null,
+     "source": "node-auth",
+     "target": "node-payment",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "edge-4",
+     "label": null,
+     "source": "node-payment",
+     "target": "node-setup",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    }
+   ]
+  },
+  {
+   "id": "addons",
+   "name": "Докупка устройств/трафика",
+   "entry_node_id": "n-payment",
+   "nodes": [
+    {
+     "id": "n-payment",
+     "type": "payment",
+     "label": "Оплата докупки",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 0
+     },
+     "page_slug": "checkout",
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-done",
+     "type": "profile",
+     "label": "Подписки",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 160
+     },
+     "page_slug": "dashboard",
+     "screen_id": null,
+     "cabinet_tab": "keys",
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    }
+   ],
+   "edges": [
+    {
+     "id": "e-1",
+     "label": null,
+     "source": "n-payment",
+     "target": "n-done",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    }
+   ]
+  },
+  {
+   "id": "gift",
+   "name": "Создание подарка",
+   "entry_node_id": "n-tariff",
+   "nodes": [
+    {
+     "id": "n-tariff",
+     "type": "selectTariff",
+     "label": "Выбор подарочного тарифа",
+     "config": {
+      "displayMode": "grid",
+      "tariffGroupCode": "gifts"
+     },
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 0
+     },
+     "page_slug": "dashboard",
+     "screen_id": null,
+     "cabinet_tab": "gifts",
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-auth",
+     "type": "auth",
+     "label": "Авторизация",
+     "config": {
+      "skippable": true,
+      "autoAdvanceIfSingle": true
+     },
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 160
+     },
+     "page_slug": "login",
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": {
+      "field": "authenticated",
+      "operator": "truthy"
+     },
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-payment",
+     "type": "payment",
+     "label": "Оплата подарка",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 320
+     },
+     "page_slug": "checkout",
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-done",
+     "type": "profile",
+     "label": "Подарок создан",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 480
+     },
+     "page_slug": "dashboard",
+     "screen_id": null,
+     "cabinet_tab": "gifts",
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    }
+   ],
+   "edges": [
+    {
+     "id": "e-1",
+     "label": null,
+     "source": "n-tariff",
+     "target": "n-auth",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "e-2",
+     "label": null,
+     "source": "n-auth",
+     "target": "n-payment",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "e-3",
+     "label": null,
+     "source": "n-payment",
+     "target": "n-done",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    }
+   ]
+  },
+  {
+   "id": "purchase",
+   "name": "Покупка из кабинета",
+   "entry_node_id": "n-tariff",
+   "nodes": [
+    {
+     "id": "n-tariff",
+     "type": "selectTariff",
+     "label": "Выбор тарифа",
+     "config": {
+      "displayMode": "grid"
+     },
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 0
+     },
+     "page_slug": "dashboard",
+     "screen_id": null,
+     "cabinet_tab": "keys",
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-payment",
+     "type": "payment",
+     "label": "Оплата",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 160
+     },
+     "page_slug": "checkout",
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    },
+    {
+     "id": "n-setup",
+     "type": "setupInstruction",
+     "label": "Подключение",
+     "config": {},
+     "enabled": true,
+     "label_en": null,
+     "position": {
+      "x": 300,
+      "y": 320
+     },
+     "page_slug": "dashboard-instructions",
+     "screen_id": null,
+     "cabinet_tab": null,
+     "auto_skip_if": null,
+     "screen_group": null,
+     "action_config": null
+    }
+   ],
+   "edges": [
+    {
+     "id": "e-1",
+     "label": null,
+     "source": "n-tariff",
+     "target": "n-payment",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    },
+    {
+     "id": "e-2",
+     "label": null,
+     "source": "n-payment",
+     "target": "n-setup",
+     "priority": null,
+     "condition": null,
+     "condition_group": null
+    }
+   ]
+  }
  ]
 }

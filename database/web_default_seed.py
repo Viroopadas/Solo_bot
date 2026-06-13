@@ -4,7 +4,7 @@ from pathlib import Path
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models.web import WebPage, WebPageVariant, WebPageVariantBlock
+from database.models.web import WebFlow, WebPage, WebPageVariant, WebPageVariantBlock
 
 DEFAULT_VARIANT_KEY = "default"
 DEFAULT_VARIANT_NAME = "Основной"
@@ -12,16 +12,17 @@ DEFAULT_VARIANT_NAME = "Основной"
 _SITE_FILE = Path(__file__).with_name("default_site.json")
 
 
-def _load_site() -> tuple[dict, dict]:
-    """Возвращает (theme_tokens, pages) из default_site.json.
-    pages: {slug: [{type, order, data}, ...]}. Ключ '_theme' — токены темы."""
+def _load_site() -> tuple[dict, dict, list]:
+    """Возвращает (theme_tokens, pages, flows) из default_site.json.
+    pages: {slug: [{type, order, data}, ...]}. '_theme' — токены темы, '_flows' — пути клиента."""
     try:
         raw = json.loads(_SITE_FILE.read_text(encoding="utf-8"))
     except Exception:
-        return {}, {}
+        return {}, {}, []
     theme = raw.get("_theme") or {}
     pages = {k: v for k, v in raw.items() if not k.startswith("_") and isinstance(v, list)}
-    return theme, pages
+    flows = raw.get("_flows") or []
+    return theme, pages, flows
 
 
 BLACK_ORANGE_THEME = {
@@ -64,7 +65,7 @@ async def seed_default_site(session: AsyncSession, force: bool = False) -> bool:
         if (existing.scalar() or 0) > 0:
             return False
 
-    theme, pages = _load_site()
+    theme, pages, flows = _load_site()
     theme_tokens = theme or BLACK_ORANGE_THEME
     theme_tokens = _apply_runtime_links(theme_tokens)
 
@@ -125,6 +126,30 @@ async def seed_default_site(session: AsyncSession, force: bool = False) -> bool:
                 )
             )
         seeded = True
+
+    for flow in flows:
+        if not isinstance(flow, dict):
+            continue
+        fid = str(flow.get("id") or "").strip()
+        if not fid:
+            continue
+        nodes = list(flow.get("nodes") or [])
+        edges = list(flow.get("edges") or [])
+        name = flow.get("name") or fid
+        entry = flow.get("entry_node_id")
+        existing = await session.get(WebFlow, fid)
+        if existing is None:
+            session.add(
+                WebFlow(id=fid, name=name, nodes=nodes, edges=edges, entry_node_id=entry, version=1)
+            )
+            seeded = True
+        elif force:
+            existing.name = name
+            existing.nodes = nodes
+            existing.edges = edges
+            existing.entry_node_id = entry
+            existing.version = (existing.version or 0) + 1
+            seeded = True
 
     await session.flush()
     return seeded
