@@ -700,7 +700,7 @@ def print_logo():
         "╚══════╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚═════╝  ╚═════╝    ╚═╝   ",
     ]
 
-    with Live(refresh_per_second=24) as live:
+    with Live(refresh_per_second=24, console=console) as live:
         display = []
         for line in logo_lines:
             display.append(f"[accent]{line}[/accent]")
