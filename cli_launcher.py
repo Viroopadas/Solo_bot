@@ -252,6 +252,33 @@ GITHUB_REPO = "https://github.com/Vladless/Solo_bot"
 GHCR_IMAGE = os.environ.get("GHCR_IMAGE", "vladless/solo-brick").strip() or "vladless/solo-brick"
 DEFAULT_SERVICE_NAME = "bot.service"
 VENV_PYTHON = os.path.join(PROJECT_DIR, "venv", "bin", "python")
+SOLOBOT_CMD_PATH = "/usr/local/bin/solobot"
+
+
+def _ensure_solobot_command() -> None:
+    if sys.platform != "linux":
+        return
+    cli_name = os.path.basename(os.path.abspath(__file__))
+    wrapper = f"#!/bin/bash\ncd {PROJECT_DIR} && python3 {cli_name} \"$@\"\n"
+    try:
+        if os.path.isfile(SOLOBOT_CMD_PATH):
+            with open(SOLOBOT_CMD_PATH, encoding="utf-8") as fh:
+                if fh.read() == wrapper:
+                    return
+    except Exception:
+        pass
+    try:
+        subprocess.run(
+            ["sudo", "tee", SOLOBOT_CMD_PATH],
+            input=wrapper,
+            text=True,
+            stdout=subprocess.DEVNULL,
+            check=True,
+        )
+        subprocess.run(["sudo", "chmod", "+x", SOLOBOT_CMD_PATH], check=True)
+        step_ok(f"Команда «solobot» установлена ({SOLOBOT_CMD_PATH})")
+    except Exception:
+        pass
 
 
 class HttpResponse:
@@ -2963,7 +2990,7 @@ def show_menu():
         return text if enabled else f"[muted]{text}  · нужен пункт 9[/muted]"
 
     table = Table(
-        title="Solobot CLI v0.5.8",
+        title="Solobot CLI v0.5.9",
         title_style="title",
         header_style="muted",
         box=box.SIMPLE,
@@ -2990,6 +3017,7 @@ def main():
     os.chdir(PROJECT_DIR)
     auto_update_cli()
     print_logo()
+    _ensure_solobot_command()
     prompt_install_if_needed()
     try:
         while True:

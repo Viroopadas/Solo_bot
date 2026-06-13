@@ -36,13 +36,13 @@ async def ensure_web_admin(session: AsyncSession) -> None:
             email=email,
             password_hash=password_hash,
             is_admin=True,
-            onboarding_stage="landing",
+            onboarding_stage="done",
         )
         session.add(identity)
         logger.info("[web-admin] created admin identity {}", email)
     else:
         identity.password_hash = password_hash
         identity.is_admin = True
-        if identity.onboarding_completed_at is None and not identity.onboarding_stage:
-            identity.onboarding_stage = "landing"
+        if identity.onboarding_completed_at is None and identity.onboarding_stage != "done":
+            identity.onboarding_stage = "done"
         logger.info("[web-admin] synced password for {}", email)
