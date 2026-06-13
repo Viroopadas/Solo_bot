@@ -23,13 +23,18 @@ except ImportError:
     requests = None
 
 try:
+    from rich import box
     from rich.console import Console, Group
     from rich.live import Live
     from rich.panel import Panel
-    from rich.progress import Progress, SpinnerColumn, TextColumn
+    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
     from rich.prompt import Confirm, Prompt
+    from rich.rule import Rule
     from rich.table import Table
+    from rich.theme import Theme
+    _HAS_RICH = True
 except ImportError:
+    _HAS_RICH = False
 
     def _strip_markup(value):
         if not isinstance(value, str):
@@ -85,9 +90,27 @@ except ImportError:
     class SpinnerColumn:
         pass
 
+    class BarColumn:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
     class TextColumn:
         def __init__(self, *args, **kwargs) -> None:
             pass
+
+    class box:
+        ROUNDED = SIMPLE = MINIMAL = HEAVY = SQUARE = HORIZONTALS = None
+
+    class Theme:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    class Rule:
+        def __init__(self, title="", **kwargs) -> None:
+            self.title = title
+
+        def __str__(self) -> str:
+            return _strip_markup(self.title)
 
     class Progress:
         def __init__(self, *args, **kwargs) -> None:
@@ -178,7 +201,47 @@ try:
 except Exception:
     pass
 
-console = Console()
+if _HAS_RICH:
+    SOLO_THEME = Theme(
+        {
+            "accent": "#22d3ee",
+            "accent.dim": "#0e7490",
+            "title": "bold #e6edf3",
+            "muted": "#8b949e",
+            "ok": "#34d399",
+            "ok.bold": "bold #34d399",
+            "warn": "#f59e0b",
+            "warn.bold": "bold #f59e0b",
+            "err": "#f87171",
+            "err.bold": "bold #f87171",
+            "step": "bold #22d3ee",
+        }
+    )
+    console = Console(theme=SOLO_THEME, highlight=False)
+else:
+    console = Console()
+
+_STEP_GLYPH = "›"
+
+
+def step_rule(index: int, total: int, title: str) -> None:
+    """Аккуратный разделитель шага установки: ─── [2/5] · Nginx ───────."""
+    console.print()
+    console.print(Rule(f"[step]{index}/{total}[/step] [muted]{_STEP_GLYPH}[/muted] [title]{title}[/title]", style="accent.dim", align="left"))
+
+
+def step_ok(text: str) -> None:
+    console.print(f"  [ok.bold]✓[/ok.bold] [muted]{text}[/muted]")
+
+
+def step_warn(text: str) -> None:
+    console.print(f"  [warn.bold]![/warn.bold] [warn]{text}[/warn]")
+
+
+def step_fail(text: str) -> None:
+    console.print(f"  [err.bold]✗[/err.bold] [err]{text}[/err]")
+
+
 ensure_utf8_locale()
 
 BACK_DIR = os.path.expanduser("~/.solobot_backups")
@@ -335,19 +398,22 @@ def run_with_status(
     check: bool = False,
     env: dict | None = None,
 ) -> subprocess.CompletedProcess:
-    with console.status(f"[bold cyan]{status_text}[/bold cyan]", spinner="dots"):
+    with console.status(f"[accent]{status_text}[/accent]", spinner="dots"):
         result = subprocess.run(
             cmd, cwd=cwd, env=env, capture_output=True, text=True, check=False
         )
     if result.returncode != 0:
+        step_fail(status_text)
         if result.stdout:
             console.print(result.stdout)
         if result.stderr:
-            console.print(f"[red]{result.stderr.rstrip()}[/red]")
+            console.print(f"[err]{result.stderr.rstrip()}[/err]")
         if check:
             raise subprocess.CalledProcessError(
                 result.returncode, cmd, result.stdout, result.stderr
             )
+    else:
+        step_ok(status_text)
     return result
 
 
@@ -634,19 +700,29 @@ def print_logo():
         "╚══════╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚═════╝  ╚═════╝    ╚═╝   ",
     ]
 
-    with Live(refresh_per_second=10) as live:
+    with Live(refresh_per_second=24) as live:
         display = []
         for line in logo_lines:
-            display.append(f"[bold cyan]{line}[/bold cyan]")
-            panel = Panel(Group(*display), border_style="cyan", padding=(0, 2), expand=False)
+            display.append(f"[accent]{line}[/accent]")
+            panel = Panel(
+                Group(*display),
+                border_style="accent.dim",
+                box=box.ROUNDED,
+                padding=(0, 3),
+                expand=False,
+                subtitle="[muted]Solobot CLI[/muted]",
+                subtitle_align="right",
+            )
             live.update(panel)
-            sleep(0.07)
+            sleep(0.05)
 
-    local_version = get_local_version() or "unknown"
-    last_update = get_last_update_date() or "unknown"
-    console.print(f"[bold green]Директория бота:[/bold green] [yellow]{PROJECT_DIR}[/yellow]")
-    console.print(f"[bold green]Установленная версия:[/bold green] [yellow]{local_version}[/yellow]")
-    console.print(f"[bold green]Последнее обновление:[/bold green] [yellow]{last_update}[/yellow]\n")
+    local_version = get_local_version() or "—"
+    last_update = get_last_update_date() or "—"
+    console.print(
+        f"[muted]версия[/muted] [title]{local_version}[/title]   "
+        f"[muted]обновлён[/muted] [title]{last_update}[/title]   "
+        f"[muted]{PROJECT_DIR}[/muted]\n"
+    )
 
 
 def list_backups():
@@ -1889,6 +1965,125 @@ def _setup_nginx(domain, web_port=3000):
         return False
 
 
+def _detect_proxies() -> dict:
+    """Какие реверс-прокси есть на сервере и кто из них запущен."""
+    def _active(svc: str) -> bool:
+        try:
+            r = subprocess.run(["systemctl", "is-active", svc], capture_output=True, text=True)
+            return r.stdout.strip() == "active"
+        except Exception:
+            return False
+    return {
+        "nginx_installed": bool(shutil.which("nginx")) or os.path.isdir("/etc/nginx"),
+        "caddy_installed": bool(shutil.which("caddy")) or os.path.isfile("/etc/caddy/Caddyfile"),
+        "nginx_active": _active("nginx"),
+        "caddy_active": _active("caddy"),
+    }
+
+
+def _web_caddy_snippet(domain: str, web_port: int) -> str:
+    """Site-блок Caddy для веб-приложения. Caddy сам выпускает SSL (Let's Encrypt)."""
+    return f"""{domain} {{
+    encode gzip
+    @solo_next path /_next/static/*
+    header @solo_next Cache-Control "public, immutable, max-age=31536000"
+    header /sw.js Cache-Control "no-cache"
+    reverse_proxy 127.0.0.1:{web_port}
+}}"""
+
+
+def _caddy_domain_conflict(domain: str) -> str | None:
+    """Файл Caddy, в котором домен уже объявлен как site-блок."""
+    paths = []
+    if os.path.isfile("/etc/caddy/Caddyfile"):
+        paths.append("/etc/caddy/Caddyfile")
+    conf_d = "/etc/caddy/conf.d"
+    if os.path.isdir(conf_d):
+        paths.extend(os.path.join(conf_d, e) for e in os.listdir(conf_d))
+    for path in paths:
+        try:
+            with open(path) as f:
+                text = f.read()
+        except Exception:
+            continue
+        for line in text.splitlines():
+            s = line.strip()
+            if not s or s.startswith("#") or "{" not in s or "reverse_proxy" in s:
+                continue
+            head = s.split("{")[0]
+            addrs = [a.strip().replace("https://", "").replace("http://", "") for a in head.replace(",", " ").split()]
+            if domain in addrs:
+                return path
+    return None
+
+
+def _ensure_caddy() -> bool:
+    """Проверяет/устанавливает Caddy из официального репозитория."""
+    if shutil.which("caddy"):
+        return True
+    if not _check_http_ports_free():
+        return False
+    try:
+        run_with_status(
+            ["sudo", "apt-get", "install", "-y", "debian-keyring", "debian-archive-keyring", "apt-transport-https", "curl", "gnupg"],
+            status_text="Зависимости Caddy", check=True,
+        )
+        subprocess.run(
+            "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg",
+            shell=True, check=True,
+        )
+        subprocess.run(
+            "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null",
+            shell=True, check=True,
+        )
+        run_with_status(["sudo", "apt-get", "update"], status_text="apt update", check=True)
+        run_with_status(["sudo", "apt-get", "install", "-y", "caddy"], status_text="Установка Caddy", check=True)
+        subprocess.run(["sudo", "systemctl", "enable", "caddy"], check=False)
+        subprocess.run(["sudo", "systemctl", "start", "caddy"], check=False)
+        return True
+    except subprocess.CalledProcessError:
+        console.print("[yellow]Не удалось установить Caddy автоматически.[/yellow]")
+        return False
+
+
+def _setup_caddy(domain, web_port=3000) -> bool:
+    """Добавляет site-блок Caddy (авто-SSL), не трогая остальной Caddyfile."""
+    caddyfile = "/etc/caddy/Caddyfile"
+    snippet = _web_caddy_snippet(domain, int(web_port))
+    try:
+        subprocess.run(["sudo", "mkdir", "-p", "/etc/caddy"], check=True)
+        if not os.path.isfile(caddyfile):
+            subprocess.run(["sudo", "touch", caddyfile], check=True)
+        with open("/tmp/_solo_caddy.conf", "w") as f:
+            f.write(f"\n# --- Solo web-app ({domain}) ---\n{snippet}\n")
+        subprocess.run(["sudo", "bash", "-c", f"cat /tmp/_solo_caddy.conf >> {caddyfile}"], check=True)
+        subprocess.run(
+            ["sudo", "caddy", "validate", "--adapter", "caddyfile", "--config", caddyfile],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(["sudo", "systemctl", "reload", "caddy"], check=True)
+        return True
+    except subprocess.CalledProcessError:
+        console.print("[yellow]Не удалось настроить Caddy (проверьте: sudo caddy validate --config /etc/caddy/Caddyfile).[/yellow]")
+        return False
+
+
+def _print_manual_caddy_hint(domain: str, web_port: int) -> None:
+    snippet = _web_caddy_snippet(domain, int(web_port))
+    console.print(
+        Panel(
+            "[white]CLI не трогал ваш Caddy. Добавьте site-блок ниже в [cyan]/etc/caddy/Caddyfile[/cyan]\n"
+            "(или в свой conf.d) и перезагрузите Caddy:\n"
+            "[dim]sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy[/dim]\n"
+            "[dim]Caddy выпустит SSL автоматически — certbot не нужен.[/dim]",
+            border_style="yellow",
+            title="[bold yellow]Ручная настройка Caddy[/bold yellow]",
+            padding=(1, 2),
+        )
+    )
+    console.print(f"\n[dim]---8<--- Caddyfile ---8<---[/dim]\n{snippet}\n[dim]---8<--- end ---8<---[/dim]\n")
+
+
 def _setup_ssl(domain):
     """Получает SSL сертификат через certbot."""
     if not _dns_precheck(domain):
@@ -1962,7 +2157,7 @@ def install_website():
     if not safe_confirm("[bold green]Начать установку сайта?[/bold green]", default=True):
         return
 
-    console.print("\n[bold][0/5] Авторизация[/bold]")
+    step_rule(0, 5, "Авторизация")
     console.print("[dim]Введите логин и пароль от вашего кабинета на сайте Solo.[/dim]")
     console.print("[dim]Данные используются только для проверки лицензии и нигде не сохраняются.[/dim]\n")
 
@@ -1996,11 +2191,11 @@ def install_website():
             )
             return
 
-    console.print("\n[bold][1/5] Docker[/bold]")
+    step_rule(1, 5, "Docker")
     if not _ensure_docker():
         return
 
-    console.print("\n[bold][2/5] Настройки[/bold]\n")
+    step_rule(2, 5, "Настройки")
 
     console.print(
         "[dim]Домен, по которому будет открываться сайт.\nDNS (A-запись) должна уже указывать на IP этого сервера.[/dim]"
@@ -2170,7 +2365,7 @@ def install_website():
     if not safe_confirm("\n[yellow]Всё верно?[/yellow]", default=True):
         return
 
-    console.print("\n[bold][3/5] Запуск сайта[/bold]")
+    step_rule(3, 5, "Запуск сайта")
     os.makedirs(WEB_DIR, exist_ok=True)
 
     from urllib.parse import urlparse
@@ -2268,45 +2463,83 @@ services:
             )
         )
 
-    console.print("\n[bold][4/5] Nginx[/bold]")
-    nginx_configured = False
-    conflict_path = _nginx_domain_conflict(domain)
-    if conflict_path:
+    step_rule(4, 5, "Reverse-proxy")
+    px = _detect_proxies()
+    if px["nginx_active"] and px["caddy_active"]:
         console.print(
-            f"[yellow]⚠ На домене [bold]{domain}[/bold] уже есть nginx-конфиг:[/yellow] {conflict_path}\n"
-            "[yellow]Автонастройка создала бы второй server-блок — это может конфликтовать с ботом.[/yellow]"
+            "[yellow]⚠ Одновременно запущены nginx и Caddy — они конфликтуют за порты 80/443.\n"
+            "  80/443 может слушать только один. Выберите владельца и при необходимости остановите второй.[/yellow]"
         )
-        do_auto = safe_confirm(
-            "[cyan]Всё равно создать отдельный server-блок?[/cyan] (Нет — покажу snippet для ручной вставки)",
-            default=False,
-        )
-    else:
-        do_auto = safe_confirm("[cyan]Настроить nginx автоматически?[/cyan]", default=True)
+    elif px["nginx_installed"] and px["caddy_installed"]:
+        console.print("[dim]На сервере есть и nginx, и Caddy.[/dim]")
 
-    if do_auto:
-        if _ensure_nginx() and _setup_nginx(domain, int(web_port)):
-            console.print(f"[green]✅ nginx настроен для {domain}[/green]")
-            nginx_configured = True
-        else:
-            console.print("[yellow]Авто-настройка не удалась, покажу snippet.[/yellow]")
-            _print_manual_nginx_hint(domain, int(web_port))
-    else:
-        _print_manual_nginx_hint(domain, int(web_port))
+    opts = [
+        ("nginx", "nginx" + (" (установлен)" if px["nginx_installed"] else " — установить")),
+        ("caddy", "Caddy, авто-SSL" + (" (установлен)" if px["caddy_installed"] else " — установить")),
+        ("manual", "Вручную (показать конфиг)"),
+    ]
+    default_idx = 2 if (px["caddy_active"] and not px["nginx_active"]) else 1
+    console.print("[cyan]Чем настроить домен сайта:[/cyan]")
+    for i, (_, label) in enumerate(opts, 1):
+        console.print(f"  {i}. {label}")
+    sel = safe_prompt("Выбор", choices=[str(i) for i in range(1, len(opts) + 1)], default=str(default_idx), show_choices=False)
+    proxy = opts[int(sel) - 1][0]
 
-    console.print("\n[bold][5/5] SSL[/bold]")
+    proxy_kind = None
     ssl_deferred = False
-    if setup_ssl and not nginx_configured:
-        console.print("[yellow]SSL пропущен: автоконфигурация certbot --nginx требует автонастройки nginx.[/yellow]")
-        console.print("[dim]После ручной правки nginx запустите: sudo certbot --nginx -d " + domain + "[/dim]")
-        ssl_deferred = True
-        setup_ssl = False
-    if setup_ssl:
-        if _setup_ssl(domain):
-            console.print("[green]✅ SSL сертификат установлен[/green]")
+
+    if proxy == "nginx":
+        conflict_path = _nginx_domain_conflict(domain)
+        if conflict_path:
+            console.print(
+                f"[yellow]⚠ На домене [bold]{domain}[/bold] уже есть nginx-конфиг:[/yellow] {conflict_path}\n"
+                "[yellow]Автонастройка создала бы второй server-блок.[/yellow]"
+            )
+            do_auto = safe_confirm("[cyan]Всё равно создать отдельный server-блок?[/cyan]", default=False)
         else:
+            do_auto = True
+        if do_auto and _ensure_nginx() and _setup_nginx(domain, int(web_port)):
+            console.print(f"[green]✅ nginx настроен для {domain}[/green]")
+            proxy_kind = "nginx"
+        else:
+            _print_manual_nginx_hint(domain, int(web_port))
+    elif proxy == "caddy":
+        conflict_path = _caddy_domain_conflict(domain)
+        if conflict_path:
+            console.print(f"[yellow]⚠ Домен [bold]{domain}[/bold] уже есть в Caddy: {conflict_path}. Покажу конфиг для ручной правки.[/yellow]")
+            _print_manual_caddy_hint(domain, int(web_port))
+        elif _ensure_caddy() and _setup_caddy(domain, int(web_port)):
+            console.print(f"[green]✅ Caddy настроен для {domain} (SSL автоматический)[/green]")
+            proxy_kind = "caddy"
+        else:
+            _print_manual_caddy_hint(domain, int(web_port))
+    else:
+        if px["caddy_installed"] and not px["nginx_installed"]:
+            _print_manual_caddy_hint(domain, int(web_port))
+        else:
+            _print_manual_nginx_hint(domain, int(web_port))
+
+    step_rule(5, 5, "SSL")
+    if proxy_kind == "caddy":
+        console.print("[green]✅ SSL выпустит Caddy автоматически (Let's Encrypt) при первом запросе — certbot не нужен.[/green]")
+        console.print(f"[dim]Условие: DNS [bold]{domain}[/bold] указывает на сервер и порты 80/443 открыты.[/dim]")
+        site_url = f"https://{domain}"
+    elif proxy_kind == "nginx":
+        if setup_ssl:
+            if _setup_ssl(domain):
+                console.print("[green]✅ SSL сертификат установлен[/green]")
+                site_url = f"https://{domain}"
+            else:
+                ssl_deferred = True
+        else:
+            console.print("[dim]SSL пропущен[/dim]")
+    else:
+        if setup_ssl:
+            console.print("[yellow]SSL отложен: сначала настройте прокси (конфиг показан выше).[/yellow]")
+            console.print(f"[dim]nginx: sudo certbot --nginx -d {domain} · Caddy выпускает SSL сам[/dim]")
             ssl_deferred = True
-    elif not ssl_deferred:
-        console.print("[dim]SSL пропущен[/dim]")
+        else:
+            console.print("[dim]SSL пропущен[/dim]")
 
     smtp_hint = ""
     if not smtp_host:
@@ -2476,8 +2709,8 @@ def manage_website():
         f"[bold]Образ:[/bold] [cyan]{_web_image(tag)}[/cyan]  [bold]Статус:[/bold] {status}"
     )
 
-    table = Table(title="Управление сайтом", title_style="bold cyan", header_style="bold blue")
-    table.add_column("№", justify="center", style="cyan", no_wrap=True)
+    table = Table(title="Управление сайтом", title_style="title", header_style="muted", box=box.SIMPLE, padding=(0, 2), expand=False)
+    table.add_column("№", justify="right", style="accent", no_wrap=True)
     table.add_column("Действие", style="white")
     table.add_row("1", "Показать статус")
     table.add_row("2", "Показать логи")
@@ -2588,8 +2821,8 @@ def show_update_menu():
         console.print("[yellow]Перенесите бота в отдельную папку и повторите попытку[/yellow]")
         return
 
-    table = Table(title="Выберите способ обновления", title_style="bold green")
-    table.add_column("№", justify="center", style="cyan", no_wrap=True)
+    table = Table(title="Выберите способ обновления", title_style="title", header_style="muted", box=box.SIMPLE, padding=(0, 2), expand=False)
+    table.add_column("№", justify="right", style="accent", no_wrap=True)
     table.add_column("Источник", style="white")
     table.add_row("1", "Обновить до BETA")
     table.add_row("2", "Обновить до релиза (релизы и патчи)")
@@ -2708,10 +2941,17 @@ def show_menu():
     )
 
     def fmt(text: str, enabled: bool) -> str:
-        return text if enabled else f"[dim]{text}  — нужен пункт 9[/dim]"
+        return text if enabled else f"[muted]{text}  · нужен пункт 9[/muted]"
 
-    table = Table(title="Solobot CLI v0.5.8", title_style="bold magenta", header_style="bold blue")
-    table.add_column("№", justify="center", style="cyan", no_wrap=True)
+    table = Table(
+        title="Solobot CLI v0.5.8",
+        title_style="title",
+        header_style="muted",
+        box=box.SIMPLE,
+        padding=(0, 2),
+        expand=False,
+    )
+    table.add_column("№", justify="right", style="accent", no_wrap=True)
     table.add_column("Операция", style="white")
     table.add_row("1", fmt("Запустить бота (systemd)", bot_runtime_ready))
     table.add_row("2", fmt("Запустить напрямую: venv/bin/python main.py", bot_installed and os.path.exists(VENV_PYTHON)))
