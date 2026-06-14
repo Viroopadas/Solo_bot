@@ -171,6 +171,63 @@ def snapshot_subscription_metrics_process_runner() -> None:
     asyncio.run(snapshot_subscription_metrics_job())
 
 
+async def anomaly_check_job() -> None:
+    """Утренняя проверка аномалий: высокий процент отказов платежей и всплеск оттока."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import func, select
+
+    from database.models import Payment, SubscriptionEvent
+
+    now = datetime.utcnow()
+    y_start = datetime(now.year, now.month, now.day) - timedelta(days=1)
+    y_end = y_start + timedelta(days=1)
+    alerts: list[str] = []
+    async with async_session_maker() as session:
+        try:
+            row = (await session.execute(
+                select(
+                    func.count().filter(Payment.status == "success").label("ok"),
+                    func.count().filter(Payment.status.in_(["failed", "cancelled"])).label("bad"),
+                ).where(Payment.created_at >= y_start).where(Payment.created_at < y_end)
+            )).first()
+            ok = int(row.ok or 0) if row else 0
+            bad = int(row.bad or 0) if row else 0
+            total = ok + bad
+            if total >= 10 and bad / total > 0.3:
+                alerts.append(f"⚠️ Высокий процент отказов платежей за вчера: {bad}/{total} ({round(bad / total * 100)}%).")
+
+            exp_y = (await session.scalar(
+                select(func.count()).select_from(SubscriptionEvent)
+                .where(SubscriptionEvent.event_type.in_(["expired", "deleted"]))
+                .where(SubscriptionEvent.created_at >= y_start).where(SubscriptionEvent.created_at < y_end)
+            )) or 0
+            week_start = y_start - timedelta(days=7)
+            exp_week = (await session.scalar(
+                select(func.count()).select_from(SubscriptionEvent)
+                .where(SubscriptionEvent.event_type.in_(["expired", "deleted"]))
+                .where(SubscriptionEvent.created_at >= week_start).where(SubscriptionEvent.created_at < y_start)
+            )) or 0
+            avg = exp_week / 7.0
+            if avg >= 5 and exp_y > avg * 2:
+                alerts.append(f"⚠️ Всплеск оттока за вчера: истекло {exp_y} (среднее за неделю ~{round(avg)}).")
+        except Exception as error:
+            logger.error("[Anomaly] ошибка проверки аномалий: {}", error)
+            return
+
+    if alerts:
+        try:
+            from services.admin_alert import send_admin_alert
+
+            await send_admin_alert("📊 Аналитика — внимание:\n" + "\n".join(alerts))
+        except Exception as error:
+            logger.error("[Anomaly] не удалось отправить алерт: {}", error)
+
+
+def anomaly_check_process_runner() -> None:
+    asyncio.run(anomaly_check_job())
+
+
 async def log_db_pool_status() -> None:
     """Раз в минуту логирует состояние пула соединений: даёт видимость «упираемся ли в лимит»."""
     try:
@@ -200,4 +257,5 @@ WEB_ANALYTICS_CLEANUP_TRIGGER = CronTrigger(hour=3, minute=30, timezone="Europe/
 ABANDONED_CHECKOUT_TRIGGER = CronTrigger(minute=20, timezone="Europe/Moscow")
 KEY_TRAFFIC_SNAPSHOT_TRIGGER = CronTrigger(hour=0, minute=10, timezone="Europe/Moscow")
 SUBSCRIPTION_METRICS_SNAPSHOT_TRIGGER = CronTrigger(hour=0, minute=20, timezone="Europe/Moscow")
+ANOMALY_CHECK_TRIGGER = CronTrigger(hour=9, minute=0, timezone="Europe/Moscow")
 DB_POOL_STATUS_TRIGGER = IntervalTrigger(minutes=1)

@@ -4,12 +4,15 @@ from core.tasks.cron_tasks import (
     DB_POOL_STATUS_TRIGGER,
     ABANDONED_CHECKOUT_TRIGGER,
     EXPIRED_GIFTS_CLEANUP_TRIGGER,
+    ANOMALY_CHECK_TRIGGER,
     KEY_TRAFFIC_SNAPSHOT_TRIGGER,
     STALE_PAYMENTS_SWEEP_TRIGGER,
     SUBSCRIPTION_METRICS_SNAPSHOT_TRIGGER,
     WEB_ANALYTICS_CLEANUP_TRIGGER,
     abandoned_checkout_reminder_job,
     abandoned_checkout_reminder_process_runner,
+    anomaly_check_job,
+    anomaly_check_process_runner,
     cleanup_expired_gifts_job,
     cleanup_expired_gifts_process_runner,
     cleanup_web_analytics_job,
@@ -181,6 +184,20 @@ def register_periodic_tasks() -> None:
             "snapshot_subscription_metrics",
             snapshot_subscription_metrics_job,
             SUBSCRIPTION_METRICS_SNAPSHOT_TRIGGER,
+        )
+
+    if process_budget > 0:
+        periodic_task_manager.register_cron_task(
+            "anomaly_check",
+            anomaly_check_process_runner,
+            ANOMALY_CHECK_TRIGGER,
+            execution_mode="process",
+        )
+    else:
+        periodic_task_manager.register_cron_task(
+            "anomaly_check",
+            anomaly_check_job,
+            ANOMALY_CHECK_TRIGGER,
         )
 
     periodic_task_manager.register_cron_task(

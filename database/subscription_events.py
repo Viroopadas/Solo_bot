@@ -11,8 +11,12 @@ from database.models import (
     Key,
     Payment,
     SubscriptionEvent,
+    User,
 )
 from logger import logger
+
+# Внутренние «платежи» (бонусы/ручная выдача) — не реальный доход и не события подписок.
+_INTERNAL_PAYMENT_SYSTEMS = ("referral", "cashback", "coupon", "admin")
 
 
 async def record_subscription_event(
@@ -67,6 +71,7 @@ async def backfill_from_payments(session: AsyncSession) -> int:
         await session.execute(
             select(Payment.user_id, Payment.tg_id, Payment.amount, Payment.created_at)
             .where(Payment.status == "success")
+            .where(Payment.payment_system.notin_(_INTERNAL_PAYMENT_SYSTEMS))
             .order_by(Payment.user_id, Payment.created_at)
         )
     ).all()
@@ -118,6 +123,7 @@ async def snapshot_daily_metrics(session: AsyncSession) -> None:
     revenue = (await session.scalar(
         select(func.coalesce(func.sum(Payment.amount), 0))
         .where(Payment.status == "success")
+        .where(Payment.payment_system.notin_(_INTERNAL_PAYMENT_SYSTEMS))
         .where(Payment.created_at >= day_start)
         .where(Payment.created_at < day_end)
     )) or 0
@@ -200,4 +206,89 @@ async def get_subscription_dynamics(session: AsyncSession, days: int) -> dict:
             {"date": r.snapshot_date.strftime("%Y-%m-%d"), "active": int(r.active)}
             for r in snap_rows
         ],
+    }
+
+
+async def get_retention_metrics(session: AsyncSession, days: int) -> dict:
+    """Удержание: churn rate, LTV, trial→paid конверсия и когортная удержанность по месяцам."""
+    from collections import defaultdict
+
+    now = datetime.utcnow()
+    since = now - timedelta(days=days)
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+    expired = (await session.scalar(
+        select(func.count()).select_from(SubscriptionEvent)
+        .where(SubscriptionEvent.event_type.in_(["expired", "deleted"]))
+        .where(SubscriptionEvent.created_at >= since)
+    )) or 0
+    active = (await session.scalar(
+        select(func.count()).select_from(Key).where(Key.expiry_time > now_ms)
+    )) or 0
+    churn_rate = (expired / (active + expired) * 100.0) if (active + expired) else 0.0
+
+    total_rev = (await session.scalar(
+        select(func.coalesce(func.sum(Payment.amount), 0))
+        .where(Payment.status == "success")
+        .where(Payment.payment_system.notin_(_INTERNAL_PAYMENT_SYSTEMS))
+    )) or 0
+    payers = (await session.scalar(
+        select(func.count(func.distinct(Payment.user_id)))
+        .where(Payment.status == "success")
+        .where(Payment.payment_system.notin_(_INTERNAL_PAYMENT_SYSTEMS))
+    )) or 0
+    ltv = (float(total_rev) / payers) if payers else 0.0
+
+    trial_users = (await session.scalar(
+        select(func.count()).select_from(User).where(User.created_at >= since).where(User.trial > 0)
+    )) or 0
+    paid_uids = (
+        select(Payment.user_id)
+        .where(Payment.status == "success")
+        .where(Payment.payment_system.notin_(_INTERNAL_PAYMENT_SYSTEMS))
+    )
+    trial_converted = (await session.scalar(
+        select(func.count()).select_from(User)
+        .where(User.created_at >= since).where(User.trial > 0).where(User.id.in_(paid_uids))
+    )) or 0
+    trial_rate = (trial_converted / trial_users * 100.0) if trial_users else 0.0
+
+    cohort_rows = (
+        await session.execute(
+            select(SubscriptionEvent.user_id, SubscriptionEvent.created_at)
+            .where(SubscriptionEvent.event_type.in_(["created", "renewed"]))
+            .where(SubscriptionEvent.created_at >= now - timedelta(days=210))
+            .where(SubscriptionEvent.user_id.isnot(None))
+        )
+    ).all()
+    user_months: dict[int, set[tuple[int, int]]] = defaultdict(set)
+    for r in cohort_rows:
+        user_months[r.user_id].add((r.created_at.year, r.created_at.month))
+
+    def mi(m: tuple[int, int]) -> int:
+        return m[0] * 12 + (m[1] - 1)
+
+    cohorts: dict[tuple[int, int], dict[int, set[int]]] = defaultdict(lambda: defaultdict(set))
+    for uid, months in user_months.items():
+        first = min(months, key=mi)
+        fi = mi(first)
+        for m in months:
+            cohorts[first][mi(m) - fi].add(uid)
+
+    max_off = 6
+    out_cohorts = []
+    for c in sorted(cohorts.keys(), key=mi)[-6:]:
+        out_cohorts.append({
+            "month": f"{c[0]}-{c[1]:02d}",
+            "size": len(cohorts[c].get(0, set())),
+            "retention": [len(cohorts[c].get(off, set())) for off in range(max_off + 1)],
+        })
+
+    return {
+        "churnRate": round(churn_rate, 1),
+        "ltvRub": round(ltv, 2),
+        "trialUsers": int(trial_users),
+        "trialConverted": int(trial_converted),
+        "trialRate": round(trial_rate, 1),
+        "cohorts": out_cohorts,
     }

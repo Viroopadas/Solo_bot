@@ -1213,6 +1213,10 @@ async def get_analytics_overview(
     since = datetime.now(timezone.utc) - timedelta(days=days)
     since_naive = since.replace(tzinfo=None)
 
+    # Внутренние «платежи» (бонусы/ручная выдача) — не реальный доход, исключаем из выручки.
+    internal_systems = ("referral", "cashback", "coupon", "admin")
+    real_income = Payment.payment_system.notin_(internal_systems)
+
     day_col = func.date_trunc("day", WebPageView.created_at).label("day")
     daily_rows = (
         await session.execute(
@@ -1376,6 +1380,7 @@ async def get_analytics_overview(
             )
             .where(Payment.created_at >= since_naive)
             .where(Payment.status == "success")
+            .where(real_income)
         )
     ).first()
 
@@ -1409,6 +1414,7 @@ async def get_analytics_overview(
             )
             .where(Payment.created_at >= since_naive)
             .where(Payment.status == "success")
+            .where(real_income)
             .group_by(pay_day_col)
             .order_by(pay_day_col)
         )
@@ -1434,23 +1440,24 @@ async def get_analytics_overview(
         .group_by(User.source_code).order_by(func.count().desc()).limit(8)
     )).all()
 
+    method_col = func.lower(func.coalesce(Payment.payment_system, "unknown")).label("method")
     method_rows = (await session.execute(
         select(
-            Payment.payment_system,
+            method_col,
             func.count().label("cnt"),
             func.coalesce(func.sum(Payment.amount), 0).label("rev"),
         )
-        .where(Payment.created_at >= since_naive).where(Payment.status == "success")
-        .group_by(Payment.payment_system).order_by(func.count().desc())
+        .where(Payment.created_at >= since_naive).where(Payment.status == "success").where(real_income)
+        .group_by(method_col).order_by(func.count().desc())
     )).all()
 
     all_payers = (await session.scalar(
         select(func.count(func.distinct(Payment.user_id)))
-        .where(Payment.created_at >= since_naive).where(Payment.status == "success")
+        .where(Payment.created_at >= since_naive).where(Payment.status == "success").where(real_income)
     )) or 0
     first_pay_sq = (
         select(Payment.user_id, func.min(Payment.created_at).label("first"))
-        .where(Payment.status == "success").group_by(Payment.user_id)
+        .where(Payment.status == "success").where(real_income).group_by(Payment.user_id)
     ).subquery()
     new_buyers = (await session.scalar(
         select(func.count()).select_from(first_pay_sq).where(first_pay_sq.c.first >= since_naive)
@@ -1469,9 +1476,10 @@ async def get_analytics_overview(
         .where(User.created_at >= since_naive)
     )) or 0
 
-    from database.subscription_events import get_subscription_dynamics
+    from database.subscription_events import get_retention_metrics, get_subscription_dynamics
 
     sub_dynamics = await get_subscription_dynamics(session, days)
+    retention = await get_retention_metrics(session, days)
 
     expiring_soon = (await session.scalar(
         select(func.count()).select_from(Key)
@@ -1574,7 +1582,7 @@ async def get_analytics_overview(
             for r in bot_source_rows
         ],
         "paymentMethods": [
-            {"method": r.payment_system or "unknown", "payments": int(r.cnt), "revenueRub": float(r.rev or 0)}
+            {"method": r.method or "unknown", "payments": int(r.cnt), "revenueRub": float(r.rev or 0)}
             for r in method_rows
         ],
         "dailySubs": [
@@ -1582,6 +1590,7 @@ async def get_analytics_overview(
             for e in sub_dynamics["dailyEvents"]
         ],
         "activeTrend": sub_dynamics["activeTrend"],
+        "retention": retention,
         "tariffs": [
             {"tariff": r.name or "Без тарифа", "count": int(r.cnt)}
             for r in tariff_rows
@@ -2036,4 +2045,10 @@ async def get_logs_health(_identity=Depends(verify_identity_admin)):
     site_raw, site_available = await _fetch_site_log_lines(500)
     site_lines = [_parse_log_line(line) for line in site_raw if line.strip()]
     out["site"] = {"available": site_available, **_count(site_lines)}
+    try:
+        from utils.versioning import get_version
+
+        out["botVersion"] = get_version(include_git_info=True)
+    except Exception:
+        out["botVersion"] = ""
     return out
