@@ -27,6 +27,7 @@ from .keyboard import (
     build_tariff_groups_kb,
     build_tariff_list_kb,
     build_tariff_menu_kb,
+    build_tariff_visibility_kb,
 )
 from .tariff_states import TariffCreateState, TariffEditState
 from .tariff_utils import render_tariff_card, validate_tariff_name
@@ -514,6 +515,65 @@ async def set_vless_flag(callback: CallbackQuery, state: FSMContext, session: As
 
     text, markup = render_tariff_card(tariff)
     await callback.message.edit_text(text=text, reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("tvis|"), IsAdminFilter())
+async def show_visibility_menu(callback: CallbackQuery, state: FSMContext):
+    tariff_id = int(callback.data.split("|")[1])
+    await state.clear()
+    await callback.message.edit_text(
+        "👁 Кому показывать тариф:",
+        reply_markup=build_tariff_visibility_kb(tariff_id),
+    )
+
+
+@router.callback_query(F.data.startswith("tvisset|"), IsAdminFilter())
+async def set_visibility(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    _, tid, mode, predicate = callback.data.split("|", 3)
+    tariff_id = int(tid)
+
+    if predicate == "active_count" and mode in ("only", "except"):
+        await state.set_state(TariffEditState.visibility_count)
+        await state.update_data(vis_tariff_id=tariff_id, vis_mode=mode)
+        await callback.message.edit_text(
+            "Введите минимальное число активных подписок (N):",
+            reply_markup=build_cancel_kb(),
+        )
+        return
+
+    result = await session.execute(select(Tariff).where(Tariff.id == tariff_id))
+    tariff = result.scalar_one_or_none()
+    if not tariff:
+        await callback.message.edit_text("❌ Тариф не найден.")
+        return
+    tariff.visibility_rules = None if (mode == "all" or predicate == "none") else {"mode": mode, "predicate": predicate}
+    tariff.updated_at = datetime.utcnow()
+
+    text, markup = render_tariff_card(tariff)
+    await callback.message.edit_text(text=text, reply_markup=markup)
+
+
+@router.message(TariffEditState.visibility_count, IsAdminFilter())
+async def apply_visibility_count(message: Message, state: FSMContext, session: AsyncSession):
+    if not message.text or not message.text.strip().isdigit() or int(message.text.strip()) <= 0:
+        await message.answer("❌ Введите положительное число.")
+        return
+    data = await state.get_data()
+    tariff_id = data.get("vis_tariff_id")
+    mode = data.get("vis_mode")
+    n = int(message.text.strip())
+    await state.clear()
+
+    result = await session.execute(select(Tariff).where(Tariff.id == tariff_id))
+    tariff = result.scalar_one_or_none()
+    if not tariff:
+        await message.answer("❌ Тариф не найден.")
+        return
+    tariff.visibility_rules = {"mode": mode, "predicate": "active_count", "min_count": n}
+    tariff.updated_at = datetime.utcnow()
+
+    text, markup = render_tariff_card(tariff)
+    await message.answer(text=text, reply_markup=markup)
 
 
 @router.message(TariffEditState.editing_value, IsAdminFilter())

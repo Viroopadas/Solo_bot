@@ -1,6 +1,7 @@
 from aiogram.types import InlineKeyboardMarkup
 
 from database.models import Tariff
+from services.tariffs.visibility import describe_visibility
 
 from .keyboard import build_single_tariff_kb
 
@@ -112,6 +113,7 @@ def render_tariff_card(tariff: Tariff) -> tuple[str, InlineKeyboardMarkup]:
     external_squad_text = getattr(tariff, "external_squad", None) or "Не задан"
     cooldown_days = int(getattr(tariff, "cooldown_days", 0) or 0)
     cooldown_text = f"раз в {cooldown_days} дн." if cooldown_days > 0 else "Без задержки"
+    visibility_text = describe_visibility(getattr(tariff, "visibility_rules", None))
 
     text = (
         f"<b>📄 Тариф: {tariff.name}</b>\n"
@@ -125,6 +127,7 @@ def render_tariff_card(tariff: Tariff) -> tuple[str, InlineKeyboardMarkup]:
         f"⚙️ Конфигуратор: <b>{configurable_text}</b>\n"
         f"Внешний сквад: <b>{external_squad_text}</b>\n"
         f"⏳ Задержка покупки: <b>{cooldown_text}</b>\n"
+        f"👁 Видимость: <b>{visibility_text}</b>\n"
         f"🔢 Позиция: <b>{sort_order}</b>\n"
         f"{'✅ Активен' if tariff.is_active else '⛔ Отключен'}"
     )

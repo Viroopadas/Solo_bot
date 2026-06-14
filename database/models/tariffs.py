@@ -29,6 +29,8 @@ class Tariff(DictLikeMixin, Base):
 
     cooldown_days = Column(Integer, nullable=False, server_default="0")
 
+    visibility_rules = Column(JSONB, nullable=True)
+
     device_options = Column(JSONB, nullable=True)
     traffic_options_gb = Column(JSONB, nullable=True)
 

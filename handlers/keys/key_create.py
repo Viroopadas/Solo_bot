@@ -47,6 +47,7 @@ from hooks.processors import (
     process_tariff_menu,
 )
 from logger import logger
+from services.tariffs.visibility import filter_visible_tariffs
 
 from .key_mode.key_cluster_mode import key_cluster_mode
 from .key_mode.key_country_mode import key_country_mode
@@ -230,7 +231,9 @@ async def handle_key_creation(
                     group_code=group_code,
                     with_subgroup_weights=True,
                 )
-                tariffs = [t for t in tariffs_data["tariffs"] if t.get("is_active")]
+                tariffs = await filter_visible_tariffs(
+                    session, tg_id, [t for t in tariffs_data["tariffs"] if t.get("is_active")]
+                )
                 subgroup_weights = tariffs_data["subgroup_weights"]
 
                 if not tariffs and discount_info and discount_info.get("available"):
@@ -241,7 +244,9 @@ async def handle_key_creation(
                         group_code=group_code,
                         with_subgroup_weights=True,
                     )
-                    tariffs = [t for t in tariffs_data["tariffs"] if t.get("is_active")]
+                    tariffs = await filter_visible_tariffs(
+                        session, tg_id, [t for t in tariffs_data["tariffs"] if t.get("is_active")]
+                    )
                     subgroup_weights = tariffs_data["subgroup_weights"]
                     discount_info = None
                     await state.update_data(discount_info=None)
@@ -386,9 +391,11 @@ async def show_tariffs_in_subgroup_user(callback: CallbackQuery, state: FSMConte
         group_code = tariffs_for_cluster[0].get("group_code")
         if group_code:
             tariffs = await get_tariffs(session, group_code=group_code)
-            filtered = [
-                tariff for tariff in tariffs if tariff.get("subgroup_title") == subgroup and tariff.get("is_active")
-            ]
+            filtered = await filter_visible_tariffs(
+                session,
+                callback.from_user.id,
+                [tariff for tariff in tariffs if tariff.get("subgroup_title") == subgroup and tariff.get("is_active")],
+            )
 
     if not filtered:
         await edit_or_send_message(
@@ -455,7 +462,11 @@ async def back_to_subgroup_tariffs(callback: CallbackQuery, state: FSMContext, s
         gc = tariffs_for_cluster[0].get("group_code")
         if gc:
             tariffs = await get_tariffs(session, group_code=gc)
-            filtered = [t for t in tariffs if t.get("subgroup_title") == subgroup and t.get("is_active")]
+            filtered = await filter_visible_tariffs(
+                session,
+                callback.from_user.id,
+                [t for t in tariffs if t.get("subgroup_title") == subgroup and t.get("is_active")],
+            )
 
     if not filtered:
         await back_to_tariff_group_list(callback, state, session)

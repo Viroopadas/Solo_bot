@@ -262,6 +262,21 @@ def build_single_tariff_kb(
     )
 
 
+def build_tariff_visibility_kb(tariff_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👁 Показывать всем", callback_data=f"tvisset|{tariff_id}|all|none")],
+            [InlineKeyboardButton(text="✅ Только: есть активная подписка", callback_data=f"tvisset|{tariff_id}|only|has_active")],
+            [InlineKeyboardButton(text="🚫 Кроме: есть активная подписка", callback_data=f"tvisset|{tariff_id}|except|has_active")],
+            [InlineKeyboardButton(text="✅ Только: горячий лид", callback_data=f"tvisset|{tariff_id}|only|hot_lead")],
+            [InlineKeyboardButton(text="🚫 Кроме: горячий лид", callback_data=f"tvisset|{tariff_id}|except|hot_lead")],
+            [InlineKeyboardButton(text="✅ Только: активных ≥ N", callback_data=f"tvisset|{tariff_id}|only|active_count")],
+            [InlineKeyboardButton(text="🚫 Кроме: активных ≥ N", callback_data=f"tvisset|{tariff_id}|except|active_count")],
+            [InlineKeyboardButton(text=BACK, callback_data=AdminTariffCallback(action=f"view|{tariff_id}").pack())],
+        ]
+    )
+
+
 def build_edit_tariff_fields_kb(tariff_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -303,6 +318,7 @@ def build_edit_tariff_fields_kb(tariff_id: int) -> InlineKeyboardMarkup:
                     callback_data=f"edit_field|{tariff_id}|cooldown_days",
                 )
             ],
+            [InlineKeyboardButton(text="👁 Видимость", callback_data=f"tvis|{tariff_id}")],
             [InlineKeyboardButton(text="🔘 Активность", callback_data=f"toggle_active|{tariff_id}")],
             [InlineKeyboardButton(text=BACK, callback_data=AdminTariffCallback(action=f"view|{tariff_id}").pack())],
         ]

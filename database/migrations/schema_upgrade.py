@@ -1605,6 +1605,14 @@ async def _migration_v40_tariff_cooldown_days(conn: AsyncConnection) -> None:
     )
 
 
+async def _migration_v41_tariff_visibility_rules(conn: AsyncConnection) -> None:
+    logger.info("[schema_upgrade] v41: tariffs.visibility_rules (условная видимость тарифа по признаку юзера)")
+    await _exec_ignore(
+        conn,
+        "ALTER TABLE tariffs ADD COLUMN IF NOT EXISTS visibility_rules JSONB",
+    )
+
+
 _MIGRATIONS = [
     (1, "Добавление users.id", _migration_v1_add_users_id),
     (2, "Добавление user_id колонок", _migration_v2_add_user_id_columns),
@@ -1646,6 +1654,7 @@ _MIGRATIONS = [
     (38, "Таблица subscription_events (журнал жизненного цикла подписок)", _migration_v38_subscription_events),
     (39, "Таблица daily_subscription_metrics (дневные снапшоты)", _migration_v39_daily_subscription_metrics),
     (40, "tariffs.cooldown_days (задержка между покупками тарифа)", _migration_v40_tariff_cooldown_days),
+    (41, "tariffs.visibility_rules (условная видимость тарифа)", _migration_v41_tariff_visibility_rules),
 ]
 
 

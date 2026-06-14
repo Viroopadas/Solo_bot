@@ -34,6 +34,7 @@ from services.payments.payment_links import PaymentLinkRequest, create_payment_l
 from services.payments.providers import WEB_LINK_PROVIDER_IDS
 from services.tariffs import calculate_config_price, filter_config_options
 from services.tariffs.cooldown import format_cooldown_left, get_tariff_cooldown_remaining
+from services.tariffs.visibility import is_tariff_visible_for
 
 
 def _tariff_to_public(t: Tariff) -> TariffPublic:
@@ -202,6 +203,8 @@ async def purchase_tariff_with_balance(
     if not tariff_is_purchasable:
         raise HTTPException(status_code=404, detail="Тариф не найден")
     if not preview:
+        if not await is_tariff_visible_for(session, int(tg_id), tariff):
+            raise HTTPException(status_code=404, detail="Тариф недоступен")
         cooldown_left = await get_tariff_cooldown_remaining(
             session, int(tg_id), int(body.tariff_id), int(tariff.get("cooldown_days") or 0)
         )
