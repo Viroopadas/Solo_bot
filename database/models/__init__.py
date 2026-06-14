@@ -12,6 +12,7 @@ from .payments import Payment
 from .polls import Poll, PollMessage, PollVote
 from .referrals import Referral
 from .servers import Server, ServerSpecialgroup, ServerSubgroup
+from .subscription_events import DailySubscriptionMetric, SubscriptionEvent
 from .tariffs import Tariff
 from .users import BlockedUser, ManualBan, TemporaryData, TrackingSource, User
 from .web import (
@@ -43,6 +44,8 @@ __all__ = [
     "TrackingSource",
     "Key",
     "KeyTrafficHistory",
+    "SubscriptionEvent",
+    "DailySubscriptionMetric",
     "Tariff",
     "Server",
     "ServerSubgroup",

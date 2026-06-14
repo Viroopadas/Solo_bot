@@ -152,6 +152,25 @@ def snapshot_key_traffic_process_runner() -> None:
     asyncio.run(snapshot_key_traffic_job())
 
 
+async def snapshot_subscription_metrics_job() -> None:
+    """Дневной снапшот подписок (активные/отток/тарифы) + одноразовый backfill из платежей."""
+    from database.subscription_events import backfill_from_payments, snapshot_daily_metrics
+
+    async with async_session_maker() as session:
+        try:
+            seeded = await backfill_from_payments(session)
+            await snapshot_daily_metrics(session)
+            await session.commit()
+            if seeded:
+                logger.info("[SubMetrics] backfill из платежей: записано {} событий", seeded)
+        except Exception as error:
+            logger.error("[SubMetrics] Ошибка снапшота подписок: {}", error)
+
+
+def snapshot_subscription_metrics_process_runner() -> None:
+    asyncio.run(snapshot_subscription_metrics_job())
+
+
 async def log_db_pool_status() -> None:
     """Раз в минуту логирует состояние пула соединений: даёт видимость «упираемся ли в лимит»."""
     try:
@@ -180,4 +199,5 @@ EXPIRED_GIFTS_CLEANUP_TRIGGER = CronTrigger(hour=3, minute=0, timezone="Europe/M
 WEB_ANALYTICS_CLEANUP_TRIGGER = CronTrigger(hour=3, minute=30, timezone="Europe/Moscow")
 ABANDONED_CHECKOUT_TRIGGER = CronTrigger(minute=20, timezone="Europe/Moscow")
 KEY_TRAFFIC_SNAPSHOT_TRIGGER = CronTrigger(hour=0, minute=10, timezone="Europe/Moscow")
+SUBSCRIPTION_METRICS_SNAPSHOT_TRIGGER = CronTrigger(hour=0, minute=20, timezone="Europe/Moscow")
 DB_POOL_STATUS_TRIGGER = IntervalTrigger(minutes=1)

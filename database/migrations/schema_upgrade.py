@@ -1547,6 +1547,56 @@ async def _migration_v35_key_traffic_history(conn: AsyncConnection) -> None:
     )
 
 
+async def _migration_v38_subscription_events(conn: AsyncConnection) -> None:
+    logger.info("[schema_upgrade] v38: таблица subscription_events (журнал жизненного цикла подписок)")
+    await _exec_ignore(
+        conn,
+        """
+        CREATE TABLE IF NOT EXISTS subscription_events (
+            id BIGSERIAL PRIMARY KEY,
+            event_type VARCHAR(24) NOT NULL,
+            user_id BIGINT,
+            tg_id BIGINT,
+            client_id VARCHAR(128),
+            tariff_id INTEGER,
+            server_id VARCHAR,
+            price_rub DOUBLE PRECISION,
+            duration_days INTEGER,
+            expiry_time BIGINT,
+            was_expired BOOLEAN,
+            source VARCHAR(32),
+            metadata JSONB,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    )
+    await _exec_ignore(conn, "CREATE INDEX IF NOT EXISTS ix_subscription_events_type_created ON subscription_events (event_type, created_at)")
+    await _exec_ignore(conn, "CREATE INDEX IF NOT EXISTS ix_subscription_events_created ON subscription_events (created_at)")
+    await _exec_ignore(conn, "CREATE INDEX IF NOT EXISTS ix_subscription_events_client ON subscription_events (client_id)")
+    await _exec_ignore(conn, "CREATE INDEX IF NOT EXISTS ix_subscription_events_user ON subscription_events (user_id)")
+
+
+async def _migration_v39_daily_subscription_metrics(conn: AsyncConnection) -> None:
+    logger.info("[schema_upgrade] v39: таблица daily_subscription_metrics (дневные снапшоты подписок)")
+    await _exec_ignore(
+        conn,
+        """
+        CREATE TABLE IF NOT EXISTS daily_subscription_metrics (
+            snapshot_date DATE PRIMARY KEY,
+            active INTEGER NOT NULL DEFAULT 0,
+            created INTEGER NOT NULL DEFAULT 0,
+            renewed INTEGER NOT NULL DEFAULT 0,
+            expired INTEGER NOT NULL DEFAULT 0,
+            deleted INTEGER NOT NULL DEFAULT 0,
+            revenue_rub DOUBLE PRECISION NOT NULL DEFAULT 0,
+            by_tariff JSONB,
+            by_server JSONB,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    )
+
+
 _MIGRATIONS = [
     (1, "Добавление users.id", _migration_v1_add_users_id),
     (2, "Добавление user_id колонок", _migration_v2_add_user_id_columns),
@@ -1585,6 +1635,8 @@ _MIGRATIONS = [
     (35, "Таблица key_traffic_history (история трафика)", _migration_v35_key_traffic_history),
     (36, "web_page_views.ab_variant (A/B)", _migration_v36_web_page_views_ab_variant),
     (37, "Таблица rate_limit_counters (распределённый fallback лимитера)", _migration_v37_rate_limit_counters),
+    (38, "Таблица subscription_events (журнал жизненного цикла подписок)", _migration_v38_subscription_events),
+    (39, "Таблица daily_subscription_metrics (дневные снапшоты)", _migration_v39_daily_subscription_metrics),
 ]
 
 

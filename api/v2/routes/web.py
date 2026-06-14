@@ -1198,7 +1198,17 @@ async def get_analytics_overview(
     session: AsyncSession = Depends(get_session),
     _identity=Depends(verify_identity_admin),
 ):
-    from database.models import Identity, Key, Payment
+    from database.models import (
+        CouponUsage,
+        GiftUsage,
+        Identity,
+        Key,
+        Payment,
+        Referral,
+        Tariff,
+        TrackingSource,
+        User,
+    )
 
     since = datetime.now(timezone.utc) - timedelta(days=days)
     since_naive = since.replace(tzinfo=None)
@@ -1404,6 +1414,80 @@ async def get_analytics_overview(
         )
     ).all()
 
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    since_ms = int(since.timestamp() * 1000)
+
+    bot_users_total = (await session.scalar(
+        select(func.count()).select_from(User).where(User.created_at >= since_naive)
+    )) or 0
+    bot_user_day = func.date_trunc("day", User.created_at).label("day")
+    daily_bot_rows = (await session.execute(
+        select(bot_user_day, func.count().label("cnt"))
+        .where(User.created_at >= since_naive)
+        .group_by(bot_user_day).order_by(bot_user_day)
+    )).all()
+
+    src_name_map = dict((await session.execute(select(TrackingSource.code, TrackingSource.name))).all())
+    bot_source_rows = (await session.execute(
+        select(User.source_code, func.count().label("cnt"))
+        .where(User.created_at >= since_naive)
+        .group_by(User.source_code).order_by(func.count().desc()).limit(8)
+    )).all()
+
+    method_rows = (await session.execute(
+        select(
+            Payment.payment_system,
+            func.count().label("cnt"),
+            func.coalesce(func.sum(Payment.amount), 0).label("rev"),
+        )
+        .where(Payment.created_at >= since_naive).where(Payment.status == "success")
+        .group_by(Payment.payment_system).order_by(func.count().desc())
+    )).all()
+
+    all_payers = (await session.scalar(
+        select(func.count(func.distinct(Payment.user_id)))
+        .where(Payment.created_at >= since_naive).where(Payment.status == "success")
+    )) or 0
+    first_pay_sq = (
+        select(Payment.user_id, func.min(Payment.created_at).label("first"))
+        .where(Payment.status == "success").group_by(Payment.user_id)
+    ).subquery()
+    new_buyers = (await session.scalar(
+        select(func.count()).select_from(first_pay_sq).where(first_pay_sq.c.first >= since_naive)
+    )) or 0
+    total_revenue = float(all_payments_row.revenue or 0) if all_payments_row else 0.0
+
+    coupons_used = (await session.scalar(
+        select(func.count()).select_from(CouponUsage).where(CouponUsage.used_at >= since_naive)
+    )) or 0
+    gifts_used = (await session.scalar(
+        select(func.count()).select_from(GiftUsage).where(GiftUsage.used_at >= since_naive)
+    )) or 0
+    referrals_cnt = (await session.scalar(
+        select(func.count()).select_from(Referral)
+        .join(User, Referral.referred_user_id == User.id)
+        .where(User.created_at >= since_naive)
+    )) or 0
+
+    from database.subscription_events import get_subscription_dynamics
+
+    sub_dynamics = await get_subscription_dynamics(session, days)
+
+    expiring_soon = (await session.scalar(
+        select(func.count()).select_from(Key)
+        .where(Key.expiry_time > now_ms).where(Key.expiry_time <= now_ms + 7 * 86400 * 1000)
+    )) or 0
+
+    tariff_rows = (await session.execute(
+        select(Tariff.name, func.count().label("cnt"))
+        .select_from(Key).join(Tariff, Key.tariff_id == Tariff.id, isouter=True)
+        .where(Key.expiry_time > now_ms).group_by(Tariff.name).order_by(func.count().desc()).limit(8)
+    )).all()
+    server_rows = (await session.execute(
+        select(Key.server_id, func.count().label("cnt"))
+        .where(Key.expiry_time > now_ms).group_by(Key.server_id).order_by(func.count().desc()).limit(8)
+    )).all()
+
     return {
         "days": days,
         "totals": {
@@ -1421,6 +1505,14 @@ async def get_analytics_overview(
             "totalPayments": int(all_payments_row.cnt or 0) if all_payments_row else 0,
             "totalRevenueRub": float(all_payments_row.revenue or 0) if all_payments_row else 0.0,
             "activeKeys": int(active_keys),
+            "botUsers": int(bot_users_total),
+            "allPayers": int(all_payers),
+            "newBuyers": int(new_buyers),
+            "arpuRub": (total_revenue / all_payers) if all_payers else 0.0,
+            "couponsUsed": int(coupons_used),
+            "giftsActivated": int(gifts_used),
+            "referrals": int(referrals_cnt),
+            "expiringSoon": int(expiring_soon),
         },
         "daily": [
             {
@@ -1472,6 +1564,31 @@ async def get_analytics_overview(
                 "checkoutVisitors": int(ab_checkout.get(row.ab_variant, 0) or 0),
             }
             for row in ab_rows
+        ],
+        "dailyBotUsers": [
+            {"date": r.day.strftime("%Y-%m-%d"), "count": int(r.cnt)}
+            for r in daily_bot_rows
+        ],
+        "botSources": [
+            {"source": (src_name_map.get(r.source_code) or r.source_code or "Прямой"), "users": int(r.cnt)}
+            for r in bot_source_rows
+        ],
+        "paymentMethods": [
+            {"method": r.payment_system or "unknown", "payments": int(r.cnt), "revenueRub": float(r.rev or 0)}
+            for r in method_rows
+        ],
+        "dailySubs": [
+            {"date": e["date"], "created": e["created"], "expired": e["expired"]}
+            for e in sub_dynamics["dailyEvents"]
+        ],
+        "activeTrend": sub_dynamics["activeTrend"],
+        "tariffs": [
+            {"tariff": r.name or "Без тарифа", "count": int(r.cnt)}
+            for r in tariff_rows
+        ],
+        "servers": [
+            {"server": r.server_id or "—", "count": int(r.cnt)}
+            for r in server_rows
         ],
     }
 
@@ -1842,7 +1959,11 @@ async def _fetch_site_log_lines(max_lines: int) -> tuple[list[str], bool]:
 
     base = (get_site_url() or "").rstrip("/")
     token = _site_log_token()
-    if not base or not token:
+    if not base:
+        logger.warning("[logs] site-log: SITE_URL пуст (Настройки → Сайт), запрос не отправлен")
+        return [], False
+    if not token:
+        logger.warning("[logs] site-log: PLUGIN_BUILDER_TOKEN пуст (config.py / WEB_CONFIG), запрос не отправлен")
         return [], False
     import aiohttp
 
@@ -1852,6 +1973,11 @@ async def _fetch_site_log_lines(max_lines: int) -> tuple[list[str], bool]:
         async with aiohttp.ClientSession(timeout=timeout) as http:
             async with http.get(url, headers={"Authorization": f"Bearer {token}"}) as resp:
                 if resp.status != 200:
+                    body = (await resp.text())[:200]
+                    logger.warning(
+                        "[logs] site-log: {} вернул HTTP {} (токен len={}); ответ: {}",
+                        url, resp.status, len(token), body,
+                    )
                     return [], False
                 data = await resp.json()
         if not isinstance(data, dict):
@@ -1859,7 +1985,7 @@ async def _fetch_site_log_lines(max_lines: int) -> tuple[list[str], bool]:
         lines = data.get("lines") if isinstance(data.get("lines"), list) else []
         return [str(line) for line in lines], bool(data.get("available", True))
     except Exception as e:
-        logger.warning("[logs] не удалось получить лог сайта: {}", e)
+        logger.warning("[logs] site-log: запрос к {} не удался: {}: {}", url, type(e).__name__, e)
         return [], False
 
 
