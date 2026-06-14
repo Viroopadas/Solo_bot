@@ -83,6 +83,8 @@ def prepare_broadcast_payload(
     normalized_cluster_name = (cluster_name or "").strip() or None
     if send_to == "cluster" and not normalized_cluster_name:
         raise ValueError("Cluster name is required for cluster broadcast")
+    if send_to == "source" and not normalized_cluster_name:
+        raise ValueError("UTM source is required for source broadcast")
     clean_text, keyboard = parse_message_buttons(text_raw)
     max_len = 1024 if photo else 4096
     if len(clean_text) > max_len:

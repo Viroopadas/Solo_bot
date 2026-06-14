@@ -100,6 +100,14 @@ async def get_recipients(
             .where(_not_banned(User.id))
         )
 
+    elif send_to == "source":
+        query = (
+            select(distinct(User.tg_id))
+            .where(User.source_code == cluster_name)
+            .where(*tg_filters)
+            .where(_not_banned(User.id))
+        )
+
     elif send_to == "hotleads":
         query = (
             select(distinct(User.tg_id))

@@ -26,8 +26,11 @@ async def handle_admin_callback_query(callback_query: CallbackQuery, state: FSMC
     role = result.scalar_one_or_none() or "admin"
 
     _, is_super, perms = await get_admin_context(callback_query.from_user.id)
-    version_text = await run_io(get_version, is_super)
-    text = f"🤖 Панель администратора\n\nВерсия бота:\n<blockquote>{version_text}</blockquote>"
+    if is_super:
+        version_text = await run_io(get_version, is_super)
+        text = f"🤖 Панель администратора\n\nВерсия бота:\n<blockquote>{version_text}</blockquote>"
+    else:
+        text = "🤖 Панель администратора"
 
     markup = await build_panel_kb(admin_role=role, permissions=perms)
 
@@ -69,8 +72,11 @@ async def handle_admin_message(message: Message, state: FSMContext, session: Asy
     role = result.scalar_one_or_none() or "admin"
 
     _, is_super, perms = await get_admin_context(message.from_user.id)
-    version_text = await run_io(get_version, is_super)
-    text = f"🤖 Панель администратора\n\nВерсия бота:\n<blockquote>{version_text}</blockquote>"
+    if is_super:
+        version_text = await run_io(get_version, is_super)
+        text = f"🤖 Панель администратора\n\nВерсия бота:\n<blockquote>{version_text}</blockquote>"
+    else:
+        text = "🤖 Панель администратора"
 
     await message.answer(
         text=text,

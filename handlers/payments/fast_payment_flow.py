@@ -14,11 +14,9 @@ from core.settings.buttons_config import BUTTONS_CONFIG
 from core.settings.money_config import get_currency_mode
 from database import (
     check_coupon_usage,
-    create_coupon_usage,
     get_balance,
     get_coupon_by_code,
     has_any_coupon_usage,
-    update_coupon_usage_count,
 )
 from database.coupons import apply_percent_coupon
 from database.temporary_data import create_temporary_data, get_temporary_data
@@ -476,13 +474,11 @@ async def fastflow_apply_coupon(message: Message, state: FSMContext, session: An
 
     required_amount_new = int(max(0, ceil(float(new_price) - float(balance_now))))
 
-    await create_coupon_usage(session, coupon.id, message.from_user.id)
-    await update_coupon_usage_count(session, coupon.id)
-
     percent_value = int(getattr(coupon, "percent", 0) or 0)
 
     temp_payload_updated = dict(temp_payload)
     temp_payload_updated["required_amount"] = int(required_amount_new)
+    temp_payload_updated["pending_coupon_id"] = int(coupon.id)
     if "selected_price_rub" in temp_payload_updated:
         temp_payload_updated["selected_price_rub"] = int(new_price)
     if "cost" in temp_payload_updated:

@@ -14,6 +14,7 @@ from core.executor import run_io, should_run_heavy_tasks_separately
 from database import async_session_maker, save_blocked_user_ids
 from middlewares.session import release_session_early
 from database.models import Server
+from database.tracking_sources import get_all_tracking_sources
 from database.scheduled_broadcasts import (
     cancel_scheduled_broadcast,
     create_scheduled_broadcast,
@@ -38,6 +39,7 @@ from .keyboard import (
     build_scheduled_broadcast_detail_kb,
     build_scheduled_broadcasts_list_kb,
     build_sender_kb,
+    build_sources_kb,
     channel_label,
 )
 from .scheduled_service import (
@@ -210,7 +212,31 @@ async def handle_cluster_select(callback_query: CallbackQuery, session: AsyncSes
 
 
 @router.callback_query(
-    AdminSenderCallback.filter(F.type != "cluster-select"),
+    AdminSenderCallback.filter(F.type == "source-select"),
+    IsAdminFilter(),
+)
+async def handle_source_select(callback_query: CallbackQuery, session: AsyncSession, state: FSMContext):
+    sources = await get_all_tracking_sources(session)
+    if not sources:
+        await callback_query.message.answer(
+            "❌ Нет UTM-источников. Создайте источник трафика, чтобы делать рассылку по метке.",
+            reply_markup=build_admin_back_kb("sender"),
+        )
+        return
+
+    data = await state.get_data()
+    text = "✍️ Выберите UTM-источник для рассылки:"
+    if data.get("edit_action") == "audience":
+        text = "✍️ Выберите новый UTM-источник для запланированной рассылки:"
+
+    await callback_query.message.answer(
+        text,
+        reply_markup=build_sources_kb(sources),
+    )
+
+
+@router.callback_query(
+    AdminSenderCallback.filter((F.type != "cluster-select") & (F.type != "source-select")),
     IsAdminFilter(),
 )
 async def handle_broadcast_type(

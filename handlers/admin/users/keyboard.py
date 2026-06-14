@@ -87,7 +87,11 @@ async def build_user_edit_kb(
         InlineKeyboardButton(
             text="🕘 История действий",
             callback_data=AdminUserEditorCallback(action="users_audit", tg_id=tg_id, data="all|all|0").pack(),
-        )
+        ),
+        InlineKeyboardButton(
+            text="🧾 История подписок",
+            callback_data=AdminUserEditorCallback(action="users_sub_history", tg_id=tg_id).pack(),
+        ),
     )
 
     builder.row(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +56,99 @@ async def record_subscription_event(
         )
     except Exception as e:
         logger.warning("[sub-events] не удалось записать событие {}: {}", event_type, e)
+
+
+async def resolve_user_ref_by_client_id(session: AsyncSession, client_id: str) -> tuple[int | None, str | None]:
+    """По client_id подписки находит ссылку на пользователя (tg_id или user_id — обе годятся
+    для resolve_user_optional). Сначала активный ключ, затем журнал событий.
+    Возвращает (ref, source), source ∈ {"active", "history", None}."""
+    needle = (client_id or "").strip().lower()
+    if not needle:
+        return None, None
+
+    row = (
+        await session.execute(
+            select(Key.tg_id, Key.user_id).where(func.lower(Key.client_id) == needle).limit(1)
+        )
+    ).first()
+    if row and (row.tg_id is not None or row.user_id is not None):
+        return (row.tg_id if row.tg_id is not None else row.user_id), "active"
+
+    ev = (
+        await session.execute(
+            select(SubscriptionEvent.tg_id, SubscriptionEvent.user_id)
+            .where(func.lower(SubscriptionEvent.client_id) == needle)
+            .order_by(SubscriptionEvent.created_at.desc())
+            .limit(1)
+        )
+    ).first()
+    if ev and (ev.tg_id is not None or ev.user_id is not None):
+        return (ev.tg_id if ev.tg_id is not None else ev.user_id), "history"
+
+    return None, None
+
+
+async def get_user_subscription_history(
+    session: AsyncSession, *, user_id: int | None = None, tg_id: int | None = None
+) -> list[dict]:
+    """Группирует журнал событий по client_id в «жизни» подписок пользователя:
+    когда появилась, сколько продлений, до какого срока, чем закончилась.
+    Самые свежие — первыми."""
+    refs = []
+    if user_id is not None:
+        refs.append(SubscriptionEvent.user_id == user_id)
+    if tg_id is not None:
+        refs.append(SubscriptionEvent.tg_id == tg_id)
+    if not refs:
+        return []
+
+    rows = (
+        await session.execute(
+            select(
+                SubscriptionEvent.client_id,
+                SubscriptionEvent.event_type,
+                SubscriptionEvent.tariff_id,
+                SubscriptionEvent.server_id,
+                SubscriptionEvent.expiry_time,
+                SubscriptionEvent.created_at,
+            )
+            .where(or_(*refs))
+            .where(SubscriptionEvent.client_id.isnot(None))
+            .order_by(SubscriptionEvent.created_at)
+        )
+    ).all()
+
+    groups: dict[str, dict] = {}
+    order: list[str] = []
+    for r in rows:
+        cid = r.client_id
+        g = groups.get(cid)
+        if g is None:
+            g = {
+                "client_id": cid,
+                "first_at": r.created_at,
+                "last_at": r.created_at,
+                "renewals": 0,
+                "tariff_id": r.tariff_id,
+                "server_id": r.server_id,
+                "max_expiry": r.expiry_time,
+                "last_event": r.event_type,
+            }
+            groups[cid] = g
+            order.append(cid)
+        else:
+            g["last_at"] = r.created_at
+            if r.tariff_id is not None:
+                g["tariff_id"] = r.tariff_id
+            if r.server_id is not None:
+                g["server_id"] = r.server_id
+            g["last_event"] = r.event_type
+        if r.expiry_time and (g["max_expiry"] is None or r.expiry_time > g["max_expiry"]):
+            g["max_expiry"] = r.expiry_time
+        if r.event_type == "renewed":
+            g["renewals"] += 1
+
+    return [groups[c] for c in reversed(order)]
 
 
 async def backfill_from_payments(session: AsyncSession) -> int:

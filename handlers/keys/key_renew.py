@@ -86,7 +86,14 @@ async def process_callback_renew_key(callback_query: CallbackQuery, state: FSMCo
     try:
         record = await get_key_details(session, key_name)
         if not record:
-            await callback_query.message.answer("<b>Ключ не найден.</b>")
+            from handlers.keys.key_create import handle_key_creation
+
+            await handle_key_creation(
+                tg_id=callback_query.from_user.id,
+                state=state,
+                session=session,
+                message_or_query=callback_query,
+            )
             return
         if not key_owned_by_user(record, callback_query.from_user.id):
             await callback_query.answer("Доступ запрещён.", show_alert=True)
@@ -295,7 +302,14 @@ async def show_tariffs_in_renew_subgroup(callback: CallbackQuery, state: FSMCont
 
         record = await get_key_details(session, key_name)
         if not record:
-            await callback.message.answer("❌ Ключ не найден.")
+            from handlers.keys.key_create import handle_key_creation
+
+            await handle_key_creation(
+                tg_id=callback.from_user.id,
+                state=state,
+                session=session,
+                message_or_query=callback,
+            )
             return
 
         server_id = record["server_id"]
@@ -464,8 +478,15 @@ async def process_callback_renew_plan(callback_query: CallbackQuery, state: FSMC
 
         record = await get_key_by_server(session, tg_id, client_id)
         if not record:
-            await callback_query.message.answer(KEY_NOT_FOUND_MSG)
-            logger.error(f"[RENEW] Ключ с client_id={client_id} не найден.")
+            logger.info(f"[RENEW] Ключ client_id={client_id} удалён — открываем покупку нового.")
+            from handlers.keys.key_create import handle_key_creation
+
+            await handle_key_creation(
+                tg_id=callback_query.from_user.id,
+                state=state,
+                session=session,
+                message_or_query=callback_query,
+            )
             return
 
         email = record["email"]

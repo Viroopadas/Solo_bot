@@ -20,6 +20,7 @@ from handlers.texts import (
     CREATING_CONNECTION_MSG,
     DEFAULT_LIMIT_LABEL,
     INSUFFICIENT_FUNDS_MSG,
+    TARIFF_COOLDOWN_MESSAGE,
     UNLIMITED_DEVICES_LABEL,
     UNLIMITED_TRAFFIC_LABEL,
 )
@@ -27,6 +28,7 @@ from handlers.utils import edit_or_send_message, get_plural_form, safe_answer_ca
 from hooks.processors import process_check_discount_validity
 from logger import logger
 from services.payments.currency_rates import format_for_user
+from services.tariffs.cooldown import format_cooldown_left, get_tariff_cooldown_remaining
 from services.tariffs.tariff_display import GB
 
 
@@ -801,6 +803,24 @@ async def select_tariff_plan(callback_query: CallbackQuery, session: Any, state:
         )
         await safe_answer_callback(callback_query)
         logger.warning(f"[TARIFF_CFG] select_tariff_plan tariff_not_found: tariff_id={tariff_id}")
+        return
+
+    cooldown_left = await get_tariff_cooldown_remaining(
+        session, tg_id, tariff.get("id"), tariff.get("cooldown_days", 0)
+    )
+    if cooldown_left > 0:
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text=MAIN_MENU, callback_data="profile"))
+        await edit_or_send_message(
+            target_message=callback_query.message,
+            text=TARIFF_COOLDOWN_MESSAGE.format(
+                days=int(tariff.get("cooldown_days") or 0),
+                left=format_cooldown_left(cooldown_left),
+            ),
+            reply_markup=builder.as_markup(),
+        )
+        await safe_answer_callback(callback_query)
+        logger.info(f"[TARIFF_CFG] select_tariff_plan cooldown_block: tg_id={tg_id} tariff_id={tariff_id} left={cooldown_left}s")
         return
 
     discount_info = await check_hot_lead_discount(session, tg_id)

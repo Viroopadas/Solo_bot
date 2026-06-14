@@ -278,7 +278,7 @@ async def my_payments(
         .limit(safe_limit)
     )
     payments = rows.scalars().all()
-    items: list[MyPaymentItem] = []
+    dated: list[tuple] = []
     for p in payments:
         meta = p.metadata_ if isinstance(p.metadata_, dict) else None
         purpose = None
@@ -286,7 +286,8 @@ async def my_payments(
             purpose = meta.get("purpose") or meta.get("description") or meta.get("tariff_name")
             if purpose is not None:
                 purpose = str(purpose)
-        items.append(
+        dated.append((
+            p.created_at,
             MyPaymentItem(
                 id=int(p.id),
                 payment_id=str(p.payment_id) if p.payment_id else None,
@@ -296,8 +297,36 @@ async def my_payments(
                 provider=str(p.payment_system or ""),
                 created_at=p.created_at.isoformat() if p.created_at else None,
                 purpose=purpose,
-            )
-        )
+            ),
+        ))
+
+    gift_rows = await session.execute(
+        select(Gift)
+        .where(Gift.sender_user_id == billing_user_id)
+        .order_by(Gift.created_at.desc())
+        .limit(safe_limit)
+    )
+    for g in gift_rows.scalars().all():
+        try:
+            gift_key = -int(str(g.gift_id)[:8], 16)
+        except (ValueError, TypeError):
+            gift_key = 0
+        dated.append((
+            g.created_at,
+            MyPaymentItem(
+                id=gift_key,
+                payment_id=str(g.gift_id) if g.gift_id else None,
+                amount=-float(g.selected_price_rub or 0),
+                currency="RUB",
+                status="success",
+                provider="gift",
+                created_at=g.created_at.isoformat() if g.created_at else None,
+                purpose="🎁 Подарочная подписка",
+            ),
+        ))
+
+    dated.sort(key=lambda r: (r[0] is not None, r[0]), reverse=True)
+    items = [item for _, item in dated[:safe_limit]]
     return MyPaymentsResponse(ok=True, payments=items)
 
 

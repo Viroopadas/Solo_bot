@@ -70,6 +70,12 @@ def build_sender_kb(include_scheduled: bool = True) -> InlineKeyboardMarkup:
             callback_data=AdminSenderCallback(type="cluster-select").pack(),
         )
     )
+    builder.row(
+        InlineKeyboardButton(
+            text="🔗 По UTM-источнику",
+            callback_data=AdminSenderCallback(type="source-select").pack(),
+        )
+    )
     if include_scheduled:
         builder.row(
             InlineKeyboardButton(
@@ -206,6 +212,25 @@ def build_clusters_kb(clusters: list) -> InlineKeyboardMarkup:
         )
 
     builder.adjust(2)
+    builder.row(build_admin_back_btn())
+
+    return builder.as_markup()
+
+
+def build_sources_kb(sources: list) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+
+    for src in sources:
+        code = src["code"]
+        name = src.get("name") or code
+        regs = src.get("registrations", 0)
+        builder.row(
+            InlineKeyboardButton(
+                text=f"🔗 {name} ({regs})",
+                callback_data=AdminSenderCallback(type="source", data=code).pack(),
+            )
+        )
+
     builder.row(build_admin_back_btn())
 
     return builder.as_markup()

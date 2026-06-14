@@ -297,6 +297,12 @@ def build_edit_tariff_fields_kb(tariff_id: int) -> InlineKeyboardMarkup:
                     callback_data=f"edit_field|{tariff_id}|external_squad",
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    text="⏳ Задержка покупки (дней)",
+                    callback_data=f"edit_field|{tariff_id}|cooldown_days",
+                )
+            ],
             [InlineKeyboardButton(text="🔘 Активность", callback_data=f"toggle_active|{tariff_id}")],
             [InlineKeyboardButton(text=BACK, callback_data=AdminTariffCallback(action=f"view|{tariff_id}").pack())],
         ]

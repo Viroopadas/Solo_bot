@@ -486,6 +486,7 @@ async def ask_new_value(callback: CallbackQuery, state: FSMContext):
         "device_limit": "лимит устройств (0 — безлимит)",
         "vless": "VLESS (да/нет)",
         "external_squad": "внешний сквад (0 — убрать)",
+        "cooldown_days": "задержку между покупками в днях (0 — без задержки)",
     }
 
     await callback.message.edit_text(
@@ -550,7 +551,7 @@ async def apply_edit(message: Message, state: FSMContext, session: AsyncSession)
         await message.answer(text=text, reply_markup=markup)
         return
 
-    if field in ["duration_days", "price_rub", "traffic_limit", "device_limit"]:
+    if field in ["duration_days", "price_rub", "traffic_limit", "device_limit", "cooldown_days"]:
         try:
             num = int(value)
             if num < 0:

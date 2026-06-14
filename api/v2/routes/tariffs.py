@@ -27,11 +27,13 @@ from database.coupons import mark_coupon_used
 from database.models import Server, Tariff
 from database.tariffs import get_tariff_by_id
 from database.temporary_data import create_temporary_data
+from handlers.texts import TARIFF_COOLDOWN_MESSAGE
 from logger import logger
 from services.keys import create_vpn_key_headless
 from services.payments.payment_links import PaymentLinkRequest, create_payment_link
 from services.payments.providers import WEB_LINK_PROVIDER_IDS
 from services.tariffs import calculate_config_price, filter_config_options
+from services.tariffs.cooldown import format_cooldown_left, get_tariff_cooldown_remaining
 
 
 def _tariff_to_public(t: Tariff) -> TariffPublic:
@@ -54,6 +56,7 @@ def _tariff_to_public(t: Tariff) -> TariffPublic:
         configurable=bool(getattr(t, "configurable", False)),
         device_options=device_options,
         traffic_options_gb=traffic_options_gb,
+        cooldown_days=int(getattr(t, "cooldown_days", 0) or 0),
     )
 
 
@@ -198,6 +201,17 @@ async def purchase_tariff_with_balance(
     )
     if not tariff_is_purchasable:
         raise HTTPException(status_code=404, detail="Тариф не найден")
+    cooldown_left = await get_tariff_cooldown_remaining(
+        session, int(tg_id), int(body.tariff_id), int(tariff.get("cooldown_days") or 0)
+    )
+    if cooldown_left > 0:
+        raise HTTPException(
+            status_code=429,
+            detail=TARIFF_COOLDOWN_MESSAGE.format(
+                days=int(tariff.get("cooldown_days") or 0),
+                left=format_cooldown_left(cooldown_left),
+            ),
+        )
     price = int(calculate_config_price(tariff, body.selected_device_limit, body.selected_traffic_gb))
     if price <= 0:
         raise HTTPException(status_code=400, detail="Некорректная цена тарифа")

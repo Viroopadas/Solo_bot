@@ -1597,6 +1597,14 @@ async def _migration_v39_daily_subscription_metrics(conn: AsyncConnection) -> No
     )
 
 
+async def _migration_v40_tariff_cooldown_days(conn: AsyncConnection) -> None:
+    logger.info("[schema_upgrade] v40: tariffs.cooldown_days (задержка между покупками тарифа, дней)")
+    await _exec_ignore(
+        conn,
+        "ALTER TABLE tariffs ADD COLUMN IF NOT EXISTS cooldown_days INTEGER NOT NULL DEFAULT 0",
+    )
+
+
 _MIGRATIONS = [
     (1, "Добавление users.id", _migration_v1_add_users_id),
     (2, "Добавление user_id колонок", _migration_v2_add_user_id_columns),
@@ -1637,6 +1645,7 @@ _MIGRATIONS = [
     (37, "Таблица rate_limit_counters (распределённый fallback лимитера)", _migration_v37_rate_limit_counters),
     (38, "Таблица subscription_events (журнал жизненного цикла подписок)", _migration_v38_subscription_events),
     (39, "Таблица daily_subscription_metrics (дневные снапшоты)", _migration_v39_daily_subscription_metrics),
+    (40, "tariffs.cooldown_days (задержка между покупками тарифа)", _migration_v40_tariff_cooldown_days),
 ]
 
 

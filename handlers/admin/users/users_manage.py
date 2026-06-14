@@ -1,5 +1,7 @@
 import re
 
+from datetime import datetime, timezone
+
 import pytz
 
 from aiogram import F, Router, types
@@ -21,7 +23,8 @@ from database import (
     update_trial,
 )
 from database.access.resolution import resolve_user_optional
-from database.models import Admin, Identity, Key, ManualBan, Payment, Referral, User
+from database.models import Admin, Identity, Key, ManualBan, Payment, Referral, Tariff, User
+from database.subscription_events import get_user_subscription_history, resolve_user_ref_by_client_id
 from filters.admin import IsAdminFilter
 from handlers.utils import sanitize_key_name
 from logger import logger
@@ -53,11 +56,12 @@ router = Router()
 async def handle_search_user(callback_query: CallbackQuery, state: FSMContext):
     text = (
         "<b>🔍 Поиск пользователя</b>"
-        "\n\n📌 Введите ID, Username, Email, UUID веб-аккаунта или перешлите сообщение пользователя."
+        "\n\n📌 Введите ID, Username, Email, UUID веб-аккаунта, ID подписки или перешлите сообщение пользователя."
         "\n\n🆔 ID - числовой айди"
         "\n📝 Username - юзернейм пользователя"
         "\n📧 Email - почта веб-кабинета"
         "\n🧬 UUID - идентификатор веб-аккаунта (identity_id)"
+        "\n🔗 ID подписки - текущий или прошлый client_id (ищется и в истории)"
         "\n\n<i>✉️ Для поиска, вы можете просто переслать сообщение от пользователя.</i>"
     )
 
@@ -122,10 +126,18 @@ async def handle_user_data_input(message: Message, state: FSMContext, session: A
         ).scalar_one_or_none()
 
         if ident is None:
-            await message.answer(
-                text="🚫 Веб-аккаунт с указанным UUID не найден!",
-                reply_markup=kb,
-            )
+            ref, src = await resolve_user_ref_by_client_id(session, raw)
+            if ref is None:
+                await message.answer(
+                    text="🚫 По этому UUID не найдено ни веб-аккаунта, ни подписки.",
+                    reply_markup=kb,
+                )
+                return
+            if src == "history":
+                await message.answer("🗂 ID найден в истории подписок (сейчас не активен).")
+            else:
+                await message.answer("🔑 Найдена активная подписка с этим ID.")
+            await process_user_search(message, state, session, ref, actor_tg_id=message.from_user.id)
             return
 
         if ident.tg_id is not None:
@@ -571,6 +583,102 @@ async def handle_users_editor(
         edit=callback_data.edit,
         actor_tg_id=callback.from_user.id,
     )
+
+
+SUB_HISTORY_LIMIT = 20
+
+
+@router.callback_query(
+    AdminUserEditorCallback.filter(F.action == "users_sub_history"),
+    IsAdminFilter(),
+)
+async def handle_user_sub_history(
+    callback: CallbackQuery,
+    callback_data: AdminUserEditorCallback,
+    session: AsyncSession,
+):
+    u = await resolve_user_optional(session, callback_data.tg_id)
+    if u is None:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+
+    history = await get_user_subscription_history(session, user_id=u.id, tg_id=u.tg_id)
+
+    back_kb = InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data=AdminUserEditorCallback(action="users_editor", tg_id=callback_data.tg_id, edit=True).pack(),
+            )
+        ]]
+    )
+
+    if not history:
+        await callback.message.edit_text(
+            "🧾 <b>История подписок</b>\n\n📭 У пользователя не было подписок (в журнале нет записей).",
+            reply_markup=back_kb,
+        )
+        return
+
+    tariff_ids = {g["tariff_id"] for g in history if g["tariff_id"] is not None}
+    tariff_names: dict[int, str] = {}
+    if tariff_ids:
+        rows = (await session.execute(select(Tariff.id, Tariff.name).where(Tariff.id.in_(tariff_ids)))).all()
+        tariff_names = {r.id: r.name for r in rows}
+
+    client_ids = [g["client_id"] for g in history]
+    active_expiry: dict[str, int] = {}
+    if client_ids:
+        rows = (
+            await session.execute(select(Key.client_id, Key.expiry_time).where(Key.client_id.in_(client_ids)))
+        ).all()
+        active_expiry = {r.client_id: r.expiry_time for r in rows}
+
+    active_count = sum(1 for g in history if g["client_id"] in active_expiry)
+    shown = history[:SUB_HISTORY_LIMIT]
+
+    lines = [
+        "🧾 <b>История подписок</b>",
+        "",
+        f"Всего: <b>{len(history)}</b> · активных сейчас: <b>{active_count}</b>",
+        "",
+    ]
+
+    for i, g in enumerate(shown, 1):
+        cid = g["client_id"]
+        short = f"{cid[:8]}…" if cid and len(cid) > 8 else (cid or "—")
+        tariff = tariff_names.get(g["tariff_id"]) or (f"тариф #{g['tariff_id']}" if g["tariff_id"] else "—")
+        created_str = g["first_at"].replace(tzinfo=pytz.UTC).astimezone(MOSCOW_TZ).strftime("%d.%m.%Y")
+
+        if cid in active_expiry:
+            status = "🟢 активна"
+            exp_ms = active_expiry[cid]
+        else:
+            exp_ms = g["max_expiry"]
+            if g["last_event"] == "deleted":
+                status = "⚪️ удалена"
+            elif g["last_event"] == "expired":
+                status = "🔴 истекла"
+            else:
+                status = "⚪️ завершена"
+
+        if exp_ms:
+            exp_str = datetime.fromtimestamp(exp_ms / 1000, tz=timezone.utc).astimezone(MOSCOW_TZ).strftime("%d.%m.%Y")
+        else:
+            exp_str = "—"
+
+        renew = f" · продлений: {g['renewals']}" if g["renewals"] else ""
+        lines.append(f"{i}. {status} · <code>{short}</code> · {tariff}")
+        lines.append(f"     с {created_str} → до {exp_str}{renew}")
+
+    if len(history) > len(shown):
+        lines.append("")
+        lines.append(f"…показаны последние {len(shown)} из {len(history)}")
+
+    try:
+        await callback.message.edit_text("\n".join(lines), reply_markup=back_kb)
+    except TelegramBadRequest:
+        pass
 
 
 async def _resolve_identity_for_user(session: AsyncSession, legacy_ref: int) -> Identity | None:

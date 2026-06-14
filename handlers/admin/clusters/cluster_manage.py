@@ -6,11 +6,13 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import REMNAWAVE_LOGIN, REMNAWAVE_PASSWORD
 from database import get_servers, update_key_expiry
 from database.models import Key, Server, Tariff
 from filters.admin import IsAdminFilter
 from logger import logger
 from middlewares.session import release_session_early
+from panels.remnawave import RemnawaveAPI
 from services.operations import renew_key_in_cluster
 
 from ..panel.keyboard import build_admin_back_kb
@@ -34,8 +36,7 @@ async def _extend_keys_expiry_batched(
         return 0
 
     updated = 0
-    total_batches = (len(client_ids) + _KEY_EXPIRY_UPDATE_BATCH - 1) // _KEY_EXPIRY_UPDATE_BATCH
-    for batch_idx, i in enumerate(range(0, len(client_ids), _KEY_EXPIRY_UPDATE_BATCH), start=1):
+    for i in range(0, len(client_ids), _KEY_EXPIRY_UPDATE_BATCH):
         chunk = client_ids[i : i + _KEY_EXPIRY_UPDATE_BATCH]
         result = await session.execute(
             update(Key)
@@ -43,14 +44,7 @@ async def _extend_keys_expiry_batched(
             .values(expiry_time=Key.expiry_time + add_ms)
             .execution_options(synchronize_session=False)
         )
-        rowcount = result.rowcount or 0
-        if rowcount > 0:
-            updated += rowcount
-        if batch_idx == 1 or batch_idx == total_batches or batch_idx % 10 == 0:
-            logger.info(
-                f"[Cluster Extend] DB batch {batch_idx}/{total_batches}: "
-                f"chunk={len(chunk)}, rowcount={rowcount}"
-            )
+        updated += result.rowcount or 0
     return updated
 
 
@@ -179,84 +173,90 @@ async def handle_days_input(message: Message, state: FSMContext, session: AsyncS
             await state.clear()
             return
 
+        result = await session.execute(select(Key).where(Key.server_id.in_(server_names)))
+        keys = result.scalars().all()
+
+        if not keys:
+            await message.answer("❌ Нет подписок в этом кластере или сервере.")
+            await state.clear()
+            return
+
         is_full_remnawave = all(str(s.get("panel_type", "")).lower() == "remnawave" for s in cluster_servers)
 
         if is_full_remnawave:
-            uuid_rows = await session.execute(
-                select(Key.client_id).where(
-                    Key.server_id.in_(server_names),
-                    Key.client_id.isnot(None),
-                )
-            )
-            uuids = [row[0] for row in uuid_rows.all()]
-
-            if not uuids:
-                await message.answer("❌ Нет валидных подписок для продления.")
-                await state.clear()
-                return
-
             api_url = cluster_servers[0].get("api_url", "")
             if not api_url:
                 await message.answer("❌ Не найден URL панели для кластера.")
                 await state.clear()
                 return
 
-            from panels.remnawave import RemnawaveAPI
+            items: list[tuple[str, str]] = []
+            client_ids: list[str] = []
+            for key in keys:
+                if not key.client_id:
+                    continue
+                new_expiry = key.expiry_time + add_ms
+                expire_iso = datetime.utcfromtimestamp(new_expiry // 1000).isoformat() + "Z"
+                items.append((key.client_id, expire_iso))
+                client_ids.append(key.client_id)
+
+            if not items:
+                await message.answer("❌ Нет валидных подписок для продления.")
+                await state.clear()
+                return
 
             await release_session_early(session)
 
             remna = RemnawaveAPI(api_url)
-
             try:
-                result_bulk = await remna.bulk_extend_expiration_date(uuids, days)
+                affected = await remna.bulk_set_expiry(
+                    items, username=REMNAWAVE_LOGIN, password=REMNAWAVE_PASSWORD
+                )
             finally:
                 await remna.aclose()
 
-            if result_bulk is None:
-                await message.answer("❌ Ошибка при обращении к API панели.")
-                await state.clear()
-                return
-
-            affected = int(result_bulk.get("affectedRows", 0) or 0)
-            logger.info(f"[Cluster Extend] Bulk API: продлено {affected} подписок на {days} дней")
-
-            db_updated = await _extend_keys_expiry_batched(session, uuids, add_ms)
-            logger.info(f"[Cluster Extend] DB: обновлено {db_updated} ключей")
+            db_updated = await _extend_keys_expiry_batched(session, client_ids, add_ms)
+            logger.info(f"[Cluster Extend] Remnawave fast: панель={affected}, БД={db_updated}")
 
             await message.answer(
-                f"✅ Время подписки продлено на <b>{days} дней</b>.\n"
-                f"Панель: <b>{affected}</b> • БД: <b>{db_updated}</b>\n"
-                f"Кластер: <b>{cluster_name}</b>"
+                f"✅ Время подписки продлено на <b>{days} дней</b> в кластере <b>{cluster_name}</b>.\n"
+                f"Панель: <b>{affected}</b> • БД: <b>{db_updated}</b>"
             )
-        else:
-            result = await session.execute(select(Key).where(Key.server_id.in_(server_names)))
-            keys = result.scalars().all()
+            await state.clear()
+            return
 
-            if not keys:
-                await message.answer("❌ Нет подписок в этом кластере или сервере.")
-                await state.clear()
-                return
+        await release_session_early(session)
 
-            await release_session_early(session)
-            for key in keys:
-                new_expiry = key.expiry_time + add_ms
+        renewed = 0
+        failed = 0
+        for key in keys:
+            if not key.client_id:
+                continue
 
-                traffic_limit = 0
-                device_limit = 0
-                key_subgroup = None
-                if key.tariff_id:
-                    tariff_result = await session.execute(
-                        select(Tariff.traffic_limit, Tariff.device_limit, Tariff.subgroup_title).where(
-                            Tariff.id == key.tariff_id,
-                            Tariff.is_active.is_(True),
-                        )
+            new_expiry = key.expiry_time + add_ms
+
+            traffic_limit = 0
+            device_limit = 0
+            key_subgroup = None
+            if key.tariff_id:
+                tariff_result = await session.execute(
+                    select(Tariff.traffic_limit, Tariff.device_limit, Tariff.subgroup_title).where(
+                        Tariff.id == key.tariff_id,
+                        Tariff.is_active.is_(True),
                     )
-                    tariff = tariff_result.first()
-                    if tariff:
-                        traffic_limit = int(tariff[0]) if tariff[0] is not None else 0
-                        device_limit = int(tariff[1]) if tariff[1] is not None else 0
-                        key_subgroup = tariff[2]
+                )
+                tariff = tariff_result.first()
+                if tariff:
+                    traffic_limit = int(tariff[0]) if tariff[0] is not None else 0
+                    device_limit = int(tariff[1]) if tariff[1] is not None else 0
+                    key_subgroup = tariff[2]
 
+            if key.current_device_limit is not None:
+                device_limit = key.current_device_limit
+            if key.current_traffic_limit is not None:
+                traffic_limit = key.current_traffic_limit
+
+            try:
                 await renew_key_in_cluster(
                     cluster_name,
                     email=key.email,
@@ -271,12 +271,18 @@ async def handle_days_input(message: Message, state: FSMContext, session: AsyncS
                     plan=key.tariff_id,
                 )
                 await update_key_expiry(session, key.client_id, new_expiry)
+                renewed += 1
+            except Exception as renew_err:
+                failed += 1
+                logger.error(f"[Cluster Extend] {key.email}: {type(renew_err).__name__}: {renew_err!r}")
 
-                logger.info(f"[Cluster Extend] {key.email} +{days}д → {datetime.utcfromtimestamp(new_expiry / 1000)}")
-
-            await message.answer(
-                f"✅ Время подписки продлено на <b>{days} дней</b> всем пользователям в кластере <b>{cluster_name}</b>."
-            )
+        summary = (
+            f"✅ Время подписки продлено на <b>{days} дней</b> в кластере <b>{cluster_name}</b>.\n"
+            f"Обновлено: <b>{renewed}</b>"
+        )
+        if failed:
+            summary += f" • ошибок: <b>{failed}</b>"
+        await message.answer(summary)
 
     except ValueError:
         await message.answer("❌ Введите корректное число дней.")
