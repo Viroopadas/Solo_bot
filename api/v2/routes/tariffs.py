@@ -201,17 +201,18 @@ async def purchase_tariff_with_balance(
     )
     if not tariff_is_purchasable:
         raise HTTPException(status_code=404, detail="Тариф не найден")
-    cooldown_left = await get_tariff_cooldown_remaining(
-        session, int(tg_id), int(body.tariff_id), int(tariff.get("cooldown_days") or 0)
-    )
-    if cooldown_left > 0:
-        raise HTTPException(
-            status_code=429,
-            detail=TARIFF_COOLDOWN_MESSAGE.format(
-                days=int(tariff.get("cooldown_days") or 0),
-                left=format_cooldown_left(cooldown_left),
-            ),
+    if not preview:
+        cooldown_left = await get_tariff_cooldown_remaining(
+            session, int(tg_id), int(body.tariff_id), int(tariff.get("cooldown_days") or 0)
         )
+        if cooldown_left > 0:
+            raise HTTPException(
+                status_code=429,
+                detail=TARIFF_COOLDOWN_MESSAGE.format(
+                    days=int(tariff.get("cooldown_days") or 0),
+                    left=format_cooldown_left(cooldown_left),
+                ),
+            )
     price = int(calculate_config_price(tariff, body.selected_device_limit, body.selected_traffic_gb))
     if price <= 0:
         raise HTTPException(status_code=400, detail="Некорректная цена тарифа")

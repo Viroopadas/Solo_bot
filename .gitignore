@@ -82,3 +82,6 @@ node_modules/
 .cursor/cursor-notifier-start.json
 nuitka-crash-report*
 api-*.json
+
+# личные черновики новостей (не коммитить)
+новость_*.md
