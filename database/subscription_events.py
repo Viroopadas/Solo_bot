@@ -15,7 +15,6 @@ from database.models import (
 )
 from logger import logger
 
-# Внутренние «платежи» (бонусы/ручная выдача) — не реальный доход и не события подписок.
 _INTERNAL_PAYMENT_SYSTEMS = ("referral", "cashback", "coupon", "admin")
 
 
