@@ -146,17 +146,24 @@ async def _node_health_tick(bot) -> None:
         api = await _login_api(api_url)
         if api is None:
             continue
+        hosts_raw: Any = []
         try:
             nodes = await api.get_all_nodes() or []
-            hosts = await api.get_hosts() or []
+            hosts_raw = await api.get_hosts() or []
         finally:
             try:
                 await api.aclose()
             except Exception:
                 pass
 
-        if isinstance(hosts, list):
-            next_targets.extend(_build_connection_targets(api_url, nodes, hosts))
+        try:
+            hosts = _normalize_hosts(hosts_raw)
+            if hosts:
+                next_targets.extend(_build_connection_targets(api_url, nodes, hosts))
+            else:
+                logger.warning("[Remnawave-Monitor] {}: список хостов пуст/неизвестной формы — targets не построены", api_url)
+        except Exception as exc:
+            logger.error("[Remnawave-Monitor] {}: ошибка сборки connection targets: {}", api_url, exc)
 
         for node in nodes:
             uuid = node.get("uuid")
@@ -193,7 +200,7 @@ async def _node_health_tick(bot) -> None:
     if next_states != last_states:
         new_cfg = dict(REMNAWAVE_CONFIG)
         new_cfg["NODE_HEALTH_LAST_STATES"] = next_states
-    if next_targets != list(REMNAWAVE_CONFIG.get("CLIENT_CONNECTION_TARGETS") or []):
+    if next_targets and next_targets != list(REMNAWAVE_CONFIG.get("CLIENT_CONNECTION_TARGETS") or []):
         new_cfg = new_cfg if new_cfg is not None else dict(REMNAWAVE_CONFIG)
         new_cfg["CLIENT_CONNECTION_TARGETS"] = next_targets
     if new_cfg is not None:
@@ -215,6 +222,19 @@ def _build_inbound_load_map(nodes: list[dict[str, Any]]) -> dict[str, int]:
                 continue
             load[str(inbound_uuid)] = load.get(str(inbound_uuid), 0) + online
     return load
+
+
+def _normalize_hosts(raw: Any) -> list[dict[str, Any]]:
+    """Приводит ответ get_hosts() к списку dict — разные версии Remnawave
+    отдают либо список, либо обёртку {hosts/response/items/data: [...]}."""
+    if isinstance(raw, list):
+        return [h for h in raw if isinstance(h, dict)]
+    if isinstance(raw, dict):
+        for key in ("hosts", "response", "items", "data"):
+            val = raw.get(key)
+            if isinstance(val, list):
+                return [h for h in val if isinstance(h, dict)]
+    return []
 
 
 def _build_connection_targets(
@@ -241,13 +261,17 @@ def _build_connection_targets(
             port = int(raw_port) if raw_port is not None else None
         except (TypeError, ValueError):
             port = None
+        try:
+            position = int(host.get("viewPosition") or 0)
+        except (TypeError, ValueError):
+            position = 0
         out.append({
             "uuid": str(host_uuid),
             "api_url": api_url,
             "name": host.get("remark") or address or str(host_uuid),
             "host": address,
             "port": port,
-            "position": int(host.get("viewPosition") or 0),
+            "position": position,
             "online": bool(alive.get(ib_uuid, False)) if ib_uuid else False,
             "load": int(load.get(ib_uuid, 0)) if ib_uuid else 0,
         })

@@ -41,7 +41,26 @@ except Exception:
     PARTNER_BONUS_PERCENTAGES = {1: 0.0}
 
 
-router = APIRouter()
+_PARTNERS_TABLE_EXISTS: bool | None = None
+
+
+async def partners_table_exists(session: AsyncSession) -> bool:
+    global _PARTNERS_TABLE_EXISTS
+    if _PARTNERS_TABLE_EXISTS is None:
+        try:
+            row = await session.execute(text("SELECT to_regclass('public.partners')"))
+            _PARTNERS_TABLE_EXISTS = row.scalar() is not None
+        except Exception:
+            _PARTNERS_TABLE_EXISTS = False
+    return _PARTNERS_TABLE_EXISTS
+
+
+async def ensure_partner_available(session: AsyncSession = Depends(get_session)) -> None:
+    if not await partners_table_exists(session):
+        raise HTTPException(status_code=404, detail="Партнёрская программа недоступна")
+
+
+router = APIRouter(dependencies=[Depends(ensure_partner_available)])
 
 
 def _parse_percent(value: float) -> float | None:

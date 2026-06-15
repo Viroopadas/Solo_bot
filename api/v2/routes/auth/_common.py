@@ -43,6 +43,11 @@ async def _resolve_partner_snapshot(session: AsyncSession, billing_user_id: int)
     except Exception:
         partner_feature_enabled = False
         default_percent = 0.0
+    from api.v2.routes.partners import partners_table_exists
+
+    partner_table_ok = await partners_table_exists(session)
+    if not partner_table_ok:
+        partner_feature_enabled = False
     payload: dict[str, object] = {
         "partner_enabled": partner_feature_enabled,
         "partner_code": "",
@@ -132,7 +137,7 @@ async def _resolve_partner_snapshot(session: AsyncSession, billing_user_id: int)
         except Exception:
             referred_paid = 0
     payload.update({
-        "partner_enabled": bool(partner_feature_enabled or code or referred_total > 0 or balance > 0),
+        "partner_enabled": bool(partner_table_ok and (partner_feature_enabled or code or referred_total > 0 or balance > 0)),
         "partner_code": code,
         "partner_balance": balance,
         "partner_percent": percent_value,
