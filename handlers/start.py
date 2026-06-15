@@ -322,13 +322,14 @@ async def show_start_menu(
     if show_profile:
         kb.row(InlineKeyboardButton(text=MAIN_MENU, callback_data="profile"))
 
-    if BUTTONS_CONFIG.get("CHANNEL_BUTTON_ENABLE", CHANNEL_EXISTS):
-        kb.row(
-            InlineKeyboardButton(text=SUPPORT, url=SUPPORT_CHAT_URL),
-            InlineKeyboardButton(text=CHANNEL, url=CHANNEL_URL),
-        )
-    else:
-        kb.row(InlineKeyboardButton(text=SUPPORT, url=SUPPORT_CHAT_URL))
+    channel_enabled = bool(BUTTONS_CONFIG.get("CHANNEL_BUTTON_ENABLE", CHANNEL_EXISTS))
+    bottom_row = []
+    if SUPPORT_CHAT_URL:
+        bottom_row.append(InlineKeyboardButton(text=SUPPORT, url=SUPPORT_CHAT_URL))
+    if channel_enabled and CHANNEL_URL:
+        bottom_row.append(InlineKeyboardButton(text=CHANNEL, url=CHANNEL_URL))
+    if bottom_row:
+        kb.row(*bottom_row)
 
     if admin:
         kb.row(InlineKeyboardButton(text=ADMIN_BTN, callback_data=AdminPanelCallback(action="admin").pack()))
