@@ -6,6 +6,7 @@ from core.tasks.cron_tasks import (
     EXPIRED_GIFTS_CLEANUP_TRIGGER,
     ANOMALY_CHECK_TRIGGER,
     KEY_TRAFFIC_SNAPSHOT_TRIGGER,
+    KEY_TRAFFIC_HOURLY_SNAPSHOT_TRIGGER,
     STALE_PAYMENTS_SWEEP_TRIGGER,
     SUBSCRIPTION_METRICS_SNAPSHOT_TRIGGER,
     WEB_ANALYTICS_CLEANUP_TRIGGER,
@@ -20,6 +21,8 @@ from core.tasks.cron_tasks import (
     log_db_pool_status,
     snapshot_key_traffic_job,
     snapshot_key_traffic_process_runner,
+    snapshot_key_traffic_hourly_job,
+    snapshot_key_traffic_hourly_process_runner,
     snapshot_subscription_metrics_job,
     snapshot_subscription_metrics_process_runner,
     scheduled_audit_drain,
@@ -170,6 +173,20 @@ def register_periodic_tasks() -> None:
             "snapshot_key_traffic",
             snapshot_key_traffic_job,
             KEY_TRAFFIC_SNAPSHOT_TRIGGER,
+        )
+
+    if process_budget > 0:
+        periodic_task_manager.register_cron_task(
+            "snapshot_key_traffic_hourly",
+            snapshot_key_traffic_hourly_process_runner,
+            KEY_TRAFFIC_HOURLY_SNAPSHOT_TRIGGER,
+            execution_mode="process",
+        )
+    else:
+        periodic_task_manager.register_cron_task(
+            "snapshot_key_traffic_hourly",
+            snapshot_key_traffic_hourly_job,
+            KEY_TRAFFIC_HOURLY_SNAPSHOT_TRIGGER,
         )
 
     if process_budget > 0:

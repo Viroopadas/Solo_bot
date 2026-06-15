@@ -152,6 +152,24 @@ def snapshot_key_traffic_process_runner() -> None:
     asyncio.run(snapshot_key_traffic_job())
 
 
+async def snapshot_key_traffic_hourly_job() -> None:
+    """Почасовой снапшот использованного трафика (для графика использования за сутки)."""
+    from services.traffic_history import snapshot_all_key_traffic_hourly
+
+    async with async_session_maker() as session:
+        try:
+            count = await snapshot_all_key_traffic_hourly(session)
+            await session.commit()
+            if count:
+                logger.info("[TrafficHistory] Почасовых снапшотов записано: {}", count)
+        except Exception as error:
+            logger.error("[TrafficHistory] Ошибка почасового снапшота: {}", error)
+
+
+def snapshot_key_traffic_hourly_process_runner() -> None:
+    asyncio.run(snapshot_key_traffic_hourly_job())
+
+
 async def snapshot_subscription_metrics_job() -> None:
     """Дневной снапшот подписок (активные/отток/тарифы) + одноразовый backfill из платежей."""
     from database.subscription_events import backfill_from_payments, snapshot_daily_metrics
@@ -256,6 +274,7 @@ EXPIRED_GIFTS_CLEANUP_TRIGGER = CronTrigger(hour=3, minute=0, timezone="Europe/M
 WEB_ANALYTICS_CLEANUP_TRIGGER = CronTrigger(hour=3, minute=30, timezone="Europe/Moscow")
 ABANDONED_CHECKOUT_TRIGGER = CronTrigger(minute=20, timezone="Europe/Moscow")
 KEY_TRAFFIC_SNAPSHOT_TRIGGER = CronTrigger(hour=0, minute=10, timezone="Europe/Moscow")
+KEY_TRAFFIC_HOURLY_SNAPSHOT_TRIGGER = CronTrigger(minute=5, timezone="Europe/Moscow")
 SUBSCRIPTION_METRICS_SNAPSHOT_TRIGGER = CronTrigger(hour=0, minute=20, timezone="Europe/Moscow")
 ANOMALY_CHECK_TRIGGER = CronTrigger(hour=9, minute=0, timezone="Europe/Moscow")
 DB_POOL_STATUS_TRIGGER = IntervalTrigger(minutes=1)

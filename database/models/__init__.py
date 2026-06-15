@@ -6,7 +6,7 @@ from .gifts import Gift, GiftUsage
 from .identity import Identity
 from .identity_notif_prefs import IdentityNotifPref
 from .identity_session import IdentitySession
-from .keys import Key, KeyTrafficHistory
+from .keys import Key, KeyTrafficHistory, KeyTrafficHourly
 from .notifications import Notification, ScheduledBroadcast
 from .payments import Payment
 from .polls import Poll, PollMessage, PollVote
@@ -44,6 +44,7 @@ __all__ = [
     "TrackingSource",
     "Key",
     "KeyTrafficHistory",
+    "KeyTrafficHourly",
     "SubscriptionEvent",
     "DailySubscriptionMetric",
     "Tariff",

@@ -1638,6 +1638,31 @@ async def _migration_v43_tariff_subgroup_settings(conn: AsyncConnection) -> None
     )
 
 
+async def _migration_v44_key_traffic_hourly(conn: AsyncConnection) -> None:
+    logger.info("[schema_upgrade] v44: key_traffic_hourly (почасовая история трафика)")
+    await _exec_ignore(
+        conn,
+        """
+        CREATE TABLE IF NOT EXISTS key_traffic_hourly (
+            id SERIAL PRIMARY KEY,
+            client_id VARCHAR(128) NOT NULL,
+            tg_id BIGINT,
+            used_gb DOUBLE PRECISION,
+            snapshot_hour TIMESTAMP NOT NULL,
+            CONSTRAINT uq_key_traffic_hourly_client_hour UNIQUE (client_id, snapshot_hour)
+        )
+        """,
+    )
+    await _exec_ignore(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_key_traffic_hourly_client_hour ON key_traffic_hourly(client_id, snapshot_hour)",
+    )
+    await _exec_ignore(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_key_traffic_hourly_hour ON key_traffic_hourly(snapshot_hour)",
+    )
+
+
 _MIGRATIONS = [
     (1, "Добавление users.id", _migration_v1_add_users_id),
     (2, "Добавление user_id колонок", _migration_v2_add_user_id_columns),
@@ -1682,6 +1707,7 @@ _MIGRATIONS = [
     (41, "tariffs.visibility_rules (условная видимость тарифа)", _migration_v41_tariff_visibility_rules),
     (42, "tariffs.description (описание состава тарифа)", _migration_v42_tariff_description),
     (43, "tariff_subgroup_settings (текст подгруппы)", _migration_v43_tariff_subgroup_settings),
+    (44, "key_traffic_hourly (почасовая история трафика)", _migration_v44_key_traffic_hourly),
 ]
 
 

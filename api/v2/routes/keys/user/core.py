@@ -139,10 +139,14 @@ async def user_key_traffic_history(
     client_id: str,
     request: Request,
     days: int = Query(default=30, ge=1, le=365),
+    granularity: str = Query(default="day"),
     session: AsyncSession = Depends(get_session),
     identity=Depends(verify_identity_token),
 ):
-    """История использования трафика по дням (для графика в кабинете)."""
+    """История использования трафика для графика в кабинете.
+
+    granularity=day — по дням (по умолчанию); granularity=hour — по часам за сутки.
+    """
     from api.ratelimit import enforce_rate_limit
 
     await enforce_rate_limit(request, session, bucket="traffic_history", max_per_window=60, window_sec=60)
@@ -154,10 +158,17 @@ async def user_key_traffic_history(
     ).scalar_one_or_none()
     if owns is None:
         raise HTTPException(status_code=404, detail="Подписка не найдена")
+
+    if granularity == "hour":
+        from services.traffic_history import get_traffic_history_hourly
+
+        points = await get_traffic_history_hourly(session, client_id, hours=24)
+        return {"client_id": client_id, "days": 1, "granularity": "hour", "points": points}
+
     from services.traffic_history import get_traffic_history
 
     points = await get_traffic_history(session, client_id, days)
-    return {"client_id": client_id, "days": days, "points": points}
+    return {"client_id": client_id, "days": days, "granularity": "day", "points": points}
 
 
 @user_router.get("/{client_id}/details", response_model=AccountKeyDetailsResponse)

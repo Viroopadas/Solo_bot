@@ -48,3 +48,18 @@ class KeyTrafficHistory(DictLikeMixin, Base):
     limit_gb = Column(Float, nullable=True)
     snapshot_date = Column(Date, nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class KeyTrafficHourly(DictLikeMixin, Base):
+    __tablename__ = "key_traffic_hourly"
+    __table_args__ = (
+        UniqueConstraint("client_id", "snapshot_hour", name="uq_key_traffic_hourly_client_hour"),
+        Index("ix_key_traffic_hourly_client_hour", "client_id", "snapshot_hour"),
+        Index("ix_key_traffic_hourly_hour", "snapshot_hour"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(String(128), nullable=False)
+    tg_id = Column(BigInteger, nullable=True)
+    used_gb = Column(Float, nullable=True)
+    snapshot_hour = Column(DateTime, nullable=False)

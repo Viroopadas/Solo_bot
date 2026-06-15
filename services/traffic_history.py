@@ -2,11 +2,11 @@ import asyncio
 import datetime as _dt
 import time
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import Key, KeyTrafficHistory
+from database.models import Key, KeyTrafficHistory, KeyTrafficHourly
 from logger import logger
 
 _GB = 1073741824
@@ -73,4 +73,70 @@ async def get_traffic_history(session: AsyncSession, client_id: str, days: int =
     return [
         {"date": d.isoformat(), "used_gb": float(u) if u is not None else None, "limit_gb": float(lim) if lim is not None else None}
         for (d, u, lim) in rows
+    ]
+
+
+async def snapshot_all_key_traffic_hourly(session: AsyncSession) -> int:
+    """Почасовой снапшот использованного трафика по активным ключам.
+    Один ряд на (client_id, час); хранит последние 48 часов (старое чистится)."""
+    from panels.remnawave_runtime import fetch_all_remnawave_traffic
+
+    now_ms = int(time.time() * 1000)
+    rows = (
+        await session.execute(
+            select(Key.client_id, Key.tg_id).where(
+                Key.expiry_time > now_ms,
+                Key.is_frozen.isnot(True),
+                Key.client_id.isnot(None),
+            )
+        )
+    ).all()
+    active = [(str(cid), tg) for (cid, tg) in rows if cid]
+    if not active:
+        return 0
+
+    needed = {cid for cid, _ in active}
+    try:
+        used_map = await asyncio.wait_for(fetch_all_remnawave_traffic(session, needed), timeout=_BULK_TIMEOUT_SEC)
+    except (TimeoutError, Exception) as exc:
+        logger.warning("[TrafficHistory] почасовой bulk-трафик не получен: {}", exc)
+        used_map = {}
+    if not used_map:
+        return 0
+
+    hour = _dt.datetime.utcnow().replace(minute=0, second=0, microsecond=0)
+    count = 0
+    for cid, tg in active:
+        used_bytes = used_map.get(cid)
+        if used_bytes is None:
+            continue
+        used_gb = round(int(used_bytes) / _GB, 3)
+        stmt = (
+            pg_insert(KeyTrafficHourly)
+            .values(client_id=cid, tg_id=tg, used_gb=used_gb, snapshot_hour=hour)
+            .on_conflict_do_update(
+                constraint="uq_key_traffic_hourly_client_hour",
+                set_={"used_gb": used_gb, "tg_id": tg},
+            )
+        )
+        await session.execute(stmt)
+        count += 1
+
+    cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=48)
+    await session.execute(delete(KeyTrafficHourly).where(KeyTrafficHourly.snapshot_hour < cutoff))
+    return count
+
+
+async def get_traffic_history_hourly(session: AsyncSession, client_id: str, hours: int = 24) -> list[dict]:
+    since = _dt.datetime.utcnow() - _dt.timedelta(hours=max(1, min(168, hours)))
+    rows = (
+        await session.execute(
+            select(KeyTrafficHourly.snapshot_hour, KeyTrafficHourly.used_gb)
+            .where(KeyTrafficHourly.client_id == client_id, KeyTrafficHourly.snapshot_hour >= since)
+            .order_by(KeyTrafficHourly.snapshot_hour.asc())
+        )
+    ).all()
+    return [
+        {"date": h.isoformat(), "used_gb": float(u) if u is not None else None, "limit_gb": None}
+        for (h, u) in rows
     ]
