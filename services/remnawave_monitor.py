@@ -247,7 +247,9 @@ def _build_connection_targets(
     """
     alive = _build_inbound_alive_map(nodes)
     load = _build_inbound_load_map(nodes)
-    any_node_alive = any(_is_node_alive(n) for n in nodes if isinstance(n, dict))
+    node_dicts = [n for n in nodes if isinstance(n, dict)]
+    any_node_alive = any(_is_node_alive(n) for n in node_dicts)
+    have_nodes = bool(node_dicts)
     out: list[dict[str, Any]] = []
     for host in hosts:
         if not isinstance(host, dict) or host.get("isDisabled"):
@@ -268,8 +270,10 @@ def _build_connection_targets(
             position = 0
         if ib_uuid and ib_uuid in alive:
             online = bool(alive[ib_uuid])
-        else:
+        elif have_nodes:
             online = any_node_alive
+        else:
+            online = True
         out.append({
             "uuid": str(host_uuid),
             "api_url": api_url,
@@ -280,6 +284,15 @@ def _build_connection_targets(
             "online": online,
             "load": int(load.get(ib_uuid, 0)) if ib_uuid else 0,
         })
+    logger.info(
+        "[Remnawave-Monitor] {}: hosts={} nodes={} alive_inbounds={} any_alive={} online={}",
+        api_url,
+        len(hosts),
+        len(node_dicts),
+        len(alive),
+        any_node_alive,
+        sum(1 for t in out if t["online"]),
+    )
     return out
 
 
