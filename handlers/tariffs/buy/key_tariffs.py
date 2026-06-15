@@ -500,54 +500,36 @@ async def render_user_config_screen(
 
     builder = InlineKeyboardBuilder()
 
-    device_buttons: list[InlineKeyboardButton] = []
-    traffic_buttons: list[InlineKeyboardButton] = []
+    def _dev_label(v: int) -> str:
+        if v == 0:
+            return UNLIMITED_DEVICES_LABEL.capitalize()
+        return f"{v} {get_plural_form(v, 'устройство', 'устройства', 'устройств')}"
+
+    def _traf_label(v: int) -> str:
+        if v == 0:
+            return UNLIMITED_TRAFFIC_LABEL.capitalize()
+        return f"{v} ГБ"
+
+    def _stepper_row(options: list[int], selected, prefix: str, label_fn) -> list[InlineKeyboardButton]:
+        cur = int(selected) if selected is not None else (options[0] if options else 0)
+        try:
+            idx = options.index(cur)
+        except ValueError:
+            idx = 0
+        prev_val = options[idx - 1] if idx > 0 else options[idx]
+        next_val = options[idx + 1] if idx < len(options) - 1 else options[idx]
+        left = "◀️" if idx > 0 else "▫️"
+        right = "▶️" if idx < len(options) - 1 else "▫️"
+        return [
+            InlineKeyboardButton(text=left, callback_data=f"{prefix}|{tariff_id}|{prev_val}"),
+            InlineKeyboardButton(text=label_fn(options[idx]), callback_data=f"{prefix}|{tariff_id}|{options[idx]}"),
+            InlineKeyboardButton(text=right, callback_data=f"{prefix}|{tariff_id}|{next_val}"),
+        ]
 
     if has_device_choice:
-        selected_devices_int = int(selected_devices or 0)
-        for value in device_int_options:
-            mark = " ✅" if value == selected_devices_int else ""
-            if value == 0:
-                caption = f"{UNLIMITED_DEVICES_LABEL.capitalize()}{mark}"
-            else:
-                caption = f"{value} {get_plural_form(value, 'устройство', 'устройства', 'устройств')}{mark}"
-            device_buttons.append(
-                InlineKeyboardButton(
-                    text=caption,
-                    callback_data=f"cfg_user_devices|{tariff_id}|{value}",
-                )
-            )
-
+        builder.row(*_stepper_row(device_int_options, selected_devices, "cfg_user_devices", _dev_label))
     if has_traffic_choice:
-        selected_traffic_int = int(selected_traffic_gb or 0)
-        for value in traffic_int_options:
-            mark = " ✅" if value == selected_traffic_int else ""
-            if value == 0:
-                caption = f"{UNLIMITED_TRAFFIC_LABEL.capitalize()}{mark}"
-            else:
-                caption = f"{value} ГБ{mark}"
-            traffic_buttons.append(
-                InlineKeyboardButton(
-                    text=caption,
-                    callback_data=f"cfg_user_traffic|{tariff_id}|{value}",
-                )
-            )
-
-    if device_buttons and traffic_buttons:
-        max_len = max(len(device_buttons), len(traffic_buttons))
-        for i in range(max_len):
-            row = []
-            if i < len(device_buttons):
-                row.append(device_buttons[i])
-            if i < len(traffic_buttons):
-                row.append(traffic_buttons[i])
-            builder.row(*row)
-    elif device_buttons:
-        for i in range(0, len(device_buttons), 2):
-            builder.row(*device_buttons[i : i + 2])
-    elif traffic_buttons:
-        for i in range(0, len(traffic_buttons), 2):
-            builder.row(*traffic_buttons[i : i + 2])
+        builder.row(*_stepper_row(traffic_int_options, selected_traffic_gb, "cfg_user_traffic", _traf_label))
 
     is_renew_mode = data.get("renew_mode") == "renew"
     confirm_prefix = "cfg_renew_confirm" if is_renew_mode else "cfg_user_confirm"
