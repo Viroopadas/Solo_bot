@@ -1378,7 +1378,7 @@
     "loadingText": "Загрузка…",
     "items": [],
     "totalFormat": "Всего {total} · онлайн {online} · недоступно {offline}",
-    "pageSize": 6,
+    "pageSize": 5,
     "prevLabel": "Назад",
     "nextLabel": "Вперёд",
     "reachableLabel": "Доступен у вас",
