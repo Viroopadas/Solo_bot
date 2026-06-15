@@ -21,19 +21,19 @@ def _throttled(payment_id: str) -> bool:
     return False
 
 
-async def reconcile_pending_payment(payment: dict) -> bool:
+async def reconcile_pending_payment(payment: dict) -> str:
     """Сверяет pending-платёж напрямую с провайдером (страховка от потерянного вебхука).
 
-    Возвращает True, если платёж подтверждён провайдером и проведён через
-    стандартный success-пайплайн (идемпотентно — повторный вебхук безопасен).
+    Возвращает 'success' — платёж подтверждён и проведён через success-пайплайн
+    (идемпотентно); 'canceled' — отменён/истёк у провайдера; '' — пока без изменений.
     """
     payment_id = str(payment.get("payment_id") or "").strip()
     provider = str(payment.get("payment_system") or "").strip().lower()
     if not payment_id or _throttled(payment_id):
-        return False
+        return ""
 
     if provider != "yookassa":
-        return False
+        return ""
 
     try:
         from yookassa import Payment as YooPayment
@@ -41,14 +41,15 @@ async def reconcile_pending_payment(payment: dict) -> bool:
         obj = await asyncio.to_thread(YooPayment.find_one, payment_id)
     except Exception as e:
         logger.warning(f"[Reconcile] YooKassa find_one({payment_id}) не удался: {e}")
-        return False
+        return ""
 
     status = str(getattr(obj, "status", "") or "").lower()
     paid = bool(getattr(obj, "paid", False))
     if status != "succeeded" or not paid:
         if status in {"canceled", "cancelled"}:
             logger.info(f"[Reconcile] Платёж {payment_id} отменён на стороне YooKassa")
-        return False
+            return "canceled"
+        return ""
 
     amount_obj = getattr(obj, "amount", None)
     try:
@@ -79,4 +80,4 @@ async def reconcile_pending_payment(payment: dict) -> bool:
     )
     logger.info(f"[Reconcile] Вебхук не дошёл — платёж {payment_id} подтверждён напрямую у YooKassa, провожу пайплайн")
     result = await process_success_payment("yookassa", parsed)
-    return bool(result.ok)
+    return "success" if result.ok else ""
