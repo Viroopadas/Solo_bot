@@ -27,3 +27,4 @@ class SubgroupEditState(StatesGroup):
     entering_new_title = State()
     confirming_deletion = State()
     editing_tariffs = State()
+    entering_description = State()

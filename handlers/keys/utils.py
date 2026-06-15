@@ -50,6 +50,37 @@ def _escape_html(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def order_tariff_items(grouped_tariffs: dict) -> list[tuple[str, Any]]:
+    """Сквозной порядок выбора: одиночные тарифы и подгруппы вперемешку по sort_order.
+
+    Подгруппа встаёт по минимальному sort_order своих тарифов. Раньше одиночные
+    тарифы всегда шли первыми, из-за чего подгруппы оказывались внизу.
+    Возвращает список ("tariff", tariff_dict) | ("subgroup", subgroup_title).
+    """
+    items: list[tuple[int, str, Any]] = []
+    for t in grouped_tariffs.get(None, []):
+        items.append((int(t.get("sort_order") or 0), "tariff", t))
+    for subgroup in sorted(s for s in grouped_tariffs if s):
+        tlist = grouped_tariffs[subgroup]
+        min_order = min((int(t.get("sort_order") or 0) for t in tlist), default=0)
+        items.append((min_order, "subgroup", subgroup))
+    items.sort(key=lambda x: x[0])
+    return [(kind, payload) for _, kind, payload in items]
+
+
+def format_subgroup_description(description: str | None, limit: int = 300) -> str:
+    """Блок описания подгруппы над «Выберите тариф:» (пусто, если не задано).
+
+    Длина ограничена, чтобы caption фото не превысил лимит Telegram (1024).
+    """
+    text = (description or "").strip()
+    if not text:
+        return ""
+    if len(text) > limit:
+        text = text[: limit - 1].rstrip() + "…"
+    return f"{_escape_html(text)}\n\n"
+
+
 def format_tariff_descriptions(tariffs: list[dict[str, Any]], total_limit: int = 500) -> str:
     """Компактный блок описаний для списка тарифов рядом с кнопками.
 

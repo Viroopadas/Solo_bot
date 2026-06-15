@@ -30,7 +30,7 @@ from database import (
 from database.access.resolution import notify_telegram_chat_id
 from database.models import Key, Server
 from database.notifications import check_hot_lead_discount
-from database.tariffs import create_subgroup_hash, find_subgroup_by_hash, get_tariffs
+from database.tariffs import create_subgroup_hash, find_subgroup_by_hash, get_subgroup_description, get_tariffs
 from handlers.buttons import BACK, MAIN_MENU, MY_SUB, PAYMENT
 from handlers.payments.fast_payment_flow import try_fast_payment_flow
 from handlers.texts import (
@@ -58,7 +58,15 @@ from services.operations import renew_key_in_cluster
 from services.payments.currency_rates import format_for_user
 from services.tariffs.tariff_display import GB, get_effective_limits_for_key
 
-from .utils import add_tariff_button_generic, build_key_callback, format_tariff_descriptions, key_owned_by_user, resolve_key
+from .utils import (
+    add_tariff_button_generic,
+    build_key_callback,
+    format_subgroup_description,
+    format_tariff_descriptions,
+    key_owned_by_user,
+    order_tariff_items,
+    resolve_key,
+)
 
 
 router = Router()
@@ -204,29 +212,24 @@ async def process_callback_renew_key(callback_query: CallbackQuery, state: FSMCo
 
         language_code = getattr(callback_query.from_user, "language_code", None)
 
-        for t in grouped_tariffs.get(None, []):
-            await add_tariff_button_generic(
-                builder=builder,
-                tariff=t,
-                session=session,
-                tg_id=tg_id,
-                language_code=language_code,
-                callback_prefix="renew_plan",
-            )
-
-        sorted_subgroups = sorted(
-            [k for k in grouped_tariffs if k],
-            key=lambda x: (subgroup_weights.get(x, 999999), x),
-        )
-
-        for subgroup in sorted_subgroups:
-            subgroup_hash = create_subgroup_hash(subgroup, group_code)
-            builder.row(
-                InlineKeyboardButton(
-                    text=subgroup,
-                    callback_data=f"renew_subgroup|{subgroup_hash}",
+        for kind, payload in order_tariff_items(grouped_tariffs):
+            if kind == "tariff":
+                await add_tariff_button_generic(
+                    builder=builder,
+                    tariff=payload,
+                    session=session,
+                    tg_id=tg_id,
+                    language_code=language_code,
+                    callback_prefix="renew_plan",
                 )
-            )
+            else:
+                subgroup_hash = create_subgroup_hash(payload, group_code)
+                builder.row(
+                    InlineKeyboardButton(
+                        text=payload,
+                        callback_data=f"renew_subgroup|{subgroup_hash}",
+                    )
+                )
 
         builder.row(InlineKeyboardButton(text=BACK, callback_data=build_key_callback("view_key", client_id, key_name)))
 
@@ -432,9 +435,14 @@ async def show_tariffs_in_renew_subgroup(callback: CallbackQuery, state: FSMCont
             )
             discount_message = DISCOUNT_OFFER_MESSAGE.format(offer_text=offer_text, time_left=time_left)
 
+        sub_desc = await get_subgroup_description(session, group_code, subgroup)
         await edit_or_send_message(
             target_message=callback.message,
-            text=f"<b>{subgroup}</b>\n\nВыберите тариф:" + format_tariff_descriptions(filtered) + discount_message,
+            text=f"<b>{subgroup}</b>\n\n"
+            + format_subgroup_description(sub_desc)
+            + "Выберите тариф:"
+            + format_tariff_descriptions(filtered, total_limit=200)
+            + discount_message,
             reply_markup=final_markup,
         )
 

@@ -69,6 +69,9 @@ def build_tariff_arrangement_groups_kb(groups: list[str]) -> InlineKeyboardMarku
 
 
 def build_tariffs_arrangement_kb(group_code: str, tariffs: list) -> InlineKeyboardMarkup:
+    from database.tariffs import create_subgroup_hash
+    from handlers.keys.utils import order_tariff_items
+
     builder = InlineKeyboardBuilder()
 
     grouped_tariffs = defaultdict(list)
@@ -76,44 +79,36 @@ def build_tariffs_arrangement_kb(group_code: str, tariffs: list) -> InlineKeyboa
         grouped_tariffs[t.get("subgroup_title")].append(t)
 
     for subgroup in grouped_tariffs:
-        grouped_tariffs[subgroup].sort(key=lambda x: x.get("sort_order"))
+        grouped_tariffs[subgroup].sort(key=lambda x: x.get("sort_order") or 0)
 
-    if grouped_tariffs.get(None):
-        for t in grouped_tariffs[None]:
-            builder.row(
-                InlineKeyboardButton(
-                    text="⬆️",
-                    callback_data=AdminTariffCallback(action=f"quick_move_up|{t.get('id')}|{group_code}").pack(),
-                ),
-                InlineKeyboardButton(
-                    text=f"  #{t.get('id')} · {t.get('name')}  ", callback_data=AdminTariffCallback(action=f"view|{t.get('id')}").pack()
-                ),
-                InlineKeyboardButton(
-                    text="⬇️",
-                    callback_data=AdminTariffCallback(action=f"quick_move_down|{t.get('id')}|{group_code}").pack(),
-                ),
-            )
+    def _tariff_row(t: dict) -> None:
+        builder.row(
+            InlineKeyboardButton(
+                text="⬆️",
+                callback_data=AdminTariffCallback(action=f"quick_move_up|{t.get('id')}|{group_code}").pack(),
+            ),
+            InlineKeyboardButton(
+                text=f"  {t.get('name')}  ",
+                callback_data=AdminTariffCallback(action=f"view|{t.get('id')}").pack(),
+            ),
+            InlineKeyboardButton(
+                text="⬇️",
+                callback_data=AdminTariffCallback(action=f"quick_move_down|{t.get('id')}|{group_code}").pack(),
+            ),
+        )
 
-    for subgroup, tariffs_list in grouped_tariffs.items():
-        if subgroup:
+    for kind, payload in order_tariff_items(grouped_tariffs):
+        if kind == "tariff":
+            _tariff_row(payload)
+        else:
+            subgroup_hash = create_subgroup_hash(payload, group_code)
             builder.row(
-                InlineKeyboardButton(text=f"📁 {subgroup}", callback_data=AdminTariffCallback(action="arrange").pack())
+                InlineKeyboardButton(text="⬆️", callback_data=f"submove_up|{subgroup_hash}|{group_code}"),
+                InlineKeyboardButton(text=f"📁 {payload}", callback_data=AdminTariffCallback(action="arrange").pack()),
+                InlineKeyboardButton(text="⬇️", callback_data=f"submove_down|{subgroup_hash}|{group_code}"),
             )
-            for t in tariffs_list:
-                builder.row(
-                    InlineKeyboardButton(
-                        text="⬆️",
-                        callback_data=AdminTariffCallback(action=f"quick_move_up|{t.get('id')}|{group_code}").pack(),
-                    ),
-                    InlineKeyboardButton(
-                        text=f"  {t.get('name')}  ",
-                        callback_data=AdminTariffCallback(action=f"view|{t.get('id')}").pack(),
-                    ),
-                    InlineKeyboardButton(
-                        text="⬇️",
-                        callback_data=AdminTariffCallback(action=f"quick_move_down|{t.get('id')}|{group_code}").pack(),
-                    ),
-                )
+            for t in grouped_tariffs[payload]:
+                _tariff_row(t)
 
     builder.row(
         InlineKeyboardButton(

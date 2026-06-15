@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,3 +40,17 @@ class Tariff(DictLikeMixin, Base):
 
     traffic_step_rub = Column(Integer, nullable=True)
     traffic_overrides = Column(JSONB, nullable=True)
+
+
+class TariffSubgroupSetting(DictLikeMixin, Base):
+    __tablename__ = "tariff_subgroup_settings"
+
+    id = Column(Integer, primary_key=True)
+    group_code = Column(String, nullable=False)
+    subgroup_title = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("group_code", "subgroup_title", name="uq_tariff_subgroup_setting"),
+    )

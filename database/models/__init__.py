@@ -13,7 +13,7 @@ from .polls import Poll, PollMessage, PollVote
 from .referrals import Referral
 from .servers import Server, ServerSpecialgroup, ServerSubgroup
 from .subscription_events import DailySubscriptionMetric, SubscriptionEvent
-from .tariffs import Tariff
+from .tariffs import Tariff, TariffSubgroupSetting
 from .users import BlockedUser, ManualBan, TemporaryData, TrackingSource, User
 from .web import (
     WebBlock,
@@ -47,6 +47,7 @@ __all__ = [
     "SubscriptionEvent",
     "DailySubscriptionMetric",
     "Tariff",
+    "TariffSubgroupSetting",
     "Server",
     "ServerSubgroup",
     "ServerSpecialgroup",
