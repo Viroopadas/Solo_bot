@@ -746,21 +746,16 @@ def print_logo():
         "╚══════╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚═════╝  ╚═════╝    ╚═╝   ",
     ]
 
-    with Live(refresh_per_second=24, console=console) as live:
-        display = []
-        for line in logo_lines:
-            display.append(f"[accent]{line}[/accent]")
-            panel = Panel(
-                Group(*display),
-                border_style="accent.dim",
-                box=box.ROUNDED,
-                padding=(0, 3),
-                expand=False,
-                subtitle="[muted]Solobot CLI[/muted]",
-                subtitle_align="right",
-            )
-            live.update(panel)
-            sleep(0.05)
+    panel = Panel(
+        Group(*[f"[accent]{line}[/accent]" for line in logo_lines]),
+        border_style="accent.dim",
+        box=box.ROUNDED,
+        padding=(0, 3),
+        expand=False,
+        subtitle="[muted]Solobot CLI[/muted]",
+        subtitle_align="right",
+    )
+    console.print(panel)
 
     local_version = get_local_version() or "—"
     last_update = get_last_update_date() or "—"

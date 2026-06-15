@@ -192,7 +192,11 @@ async def auth_summary(
     actor = get_request_actor(request)
     billing_user_id = actor.billing_user_id if actor and actor.billing_user_id is not None else None
     if billing_user_id is None:
-        billing_user_id = await idb.ensure_billing_user_for_identity(session, identity)
+        try:
+            billing_user_id = await idb.ensure_billing_user_for_identity(session, identity)
+        except Exception as exc:
+            logger.warning("[auth_summary] billing_user_id не определён: {}", exc)
+            billing_user_id = None
     async def _safe(factory, default):
         try:
             async with session.begin_nested():
@@ -222,7 +226,7 @@ async def auth_summary(
         linked_telegram=identity.tg_id is not None,
         created_at=identity.created_at.isoformat() if identity.created_at else None,
         password_set=bool(identity.password_set),
-        referral_code=encode_referral_code(int(billing_user_id)),
+        referral_code=encode_referral_code(int(billing_user_id)) if billing_user_id is not None else "",
         balance=balance,
         trial_status=int(trial_status),
         keys_total=keys_total,
