@@ -23,14 +23,19 @@ TICK_SLEEP_SEC = 30
 
 
 async def get_client_node_statuses(session) -> list[dict]:
-    """Статусы нод для показа клиенту.
+    """Реальные точки подключения клиента для показа в кабинете.
 
-    Скрывает выключенные вручную: isDisabled в панели Remnawave и servers.enabled=false в боте.
-    Возвращает [{uuid, online, name, load, address}] — address нужен для браузерной пробы
-    доступности с устройства клиента.
+    Источник — хосты Remnawave (host.address:host.port), из которых собирается
+    подписка, т.е. ровно тот endpoint, к которому коннектится устройство клиента.
+    Снапшот строится в _node_health_tick и кэшируется в CLIENT_CONNECTION_TARGETS,
+    чтобы публичный запрос не дёргал панель.
+
+    Скрыты выключенные вручную (host.isDisabled в панели и servers.enabled=false в боте).
+    Возвращает [{uuid, online, name, load, host, port}] — host:port нужны для браузерной
+    пробы реальной доступности с устройства клиента.
     """
-    states = dict(REMNAWAVE_CONFIG.get("NODE_HEALTH_LAST_STATES") or {})
-    if not states:
+    targets = list(REMNAWAVE_CONFIG.get("CLIENT_CONNECTION_TARGETS") or [])
+    if not targets:
         return []
 
     servers = await get_servers(session, include_enabled=True)
@@ -42,20 +47,17 @@ async def get_client_node_statuses(session) -> list[dict]:
                 enabled_by_api[api] = bool(s.get("enabled"))
 
     out: list[dict] = []
-    for key, info in states.items():
-        api_url, _, uuid = str(key).partition("::")
-        if not uuid:
-            continue
-        if info.get("isDisabled"):
-            continue
+    for tgt in targets:
+        api_url = str(tgt.get("api_url") or "")
         if enabled_by_api.get(api_url.rstrip("/"), True) is False:
             continue
         out.append({
-            "uuid": uuid,
-            "online": bool(info.get("alive")),
-            "name": info.get("name") or "",
-            "load": int(info.get("usersOnline") or 0),
-            "address": info.get("address") or "",
+            "uuid": str(tgt.get("uuid") or ""),
+            "online": bool(tgt.get("online")),
+            "name": tgt.get("name") or "",
+            "load": int(tgt.get("load") or 0),
+            "host": tgt.get("host") or "",
+            "port": tgt.get("port"),
         })
     return out
 
@@ -136,6 +138,7 @@ async def _node_health_tick(bot) -> None:
 
     last_states: dict[str, dict[str, Any]] = dict(REMNAWAVE_CONFIG.get("NODE_HEALTH_LAST_STATES") or {})
     next_states: dict[str, dict[str, Any]] = {}
+    next_targets: list[dict[str, Any]] = []
     alerts: list[tuple[str, dict[str, Any], bool]] = []
 
     for api_url in panels:
@@ -144,11 +147,15 @@ async def _node_health_tick(bot) -> None:
             continue
         try:
             nodes = await api.get_all_nodes() or []
+            hosts = await api.get_hosts() or []
         finally:
             try:
                 await api.aclose()
             except Exception:
                 pass
+
+        if isinstance(hosts, list):
+            next_targets.extend(_build_connection_targets(api_url, nodes, hosts))
 
         for node in nodes:
             uuid = node.get("uuid")
@@ -181,9 +188,14 @@ async def _node_health_tick(bot) -> None:
                 lines.append(f"⚠️ <b>{name}</b> ({address}) — {html_escape(str(reason))}")
         await _send_to_admins(bot, "\n".join(lines), reply_markup=_build_servers_kb())
 
+    new_cfg: dict[str, Any] | None = None
     if next_states != last_states:
         new_cfg = dict(REMNAWAVE_CONFIG)
         new_cfg["NODE_HEALTH_LAST_STATES"] = next_states
+    if next_targets != list(REMNAWAVE_CONFIG.get("CLIENT_CONNECTION_TARGETS") or []):
+        new_cfg = new_cfg if new_cfg is not None else dict(REMNAWAVE_CONFIG)
+        new_cfg["CLIENT_CONNECTION_TARGETS"] = next_targets
+    if new_cfg is not None:
         async with async_session_maker() as session:
             await update_remnawave_config(session, new_cfg)
 
@@ -202,6 +214,42 @@ def _build_inbound_load_map(nodes: list[dict[str, Any]]) -> dict[str, int]:
                 continue
             load[str(inbound_uuid)] = load.get(str(inbound_uuid), 0) + online
     return load
+
+
+def _build_connection_targets(
+    api_url: str, nodes: list[dict[str, Any]], hosts: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Реальные клиентские endpoint'ы из хостов панели: host.address:host.port.
+
+    online/load берутся по inbound хоста (жива ли обслуживающая нода и её нагрузка).
+    Выключенные вручную хосты (isDisabled) пропускаются.
+    """
+    alive = _build_inbound_alive_map(nodes)
+    load = _build_inbound_load_map(nodes)
+    out: list[dict[str, Any]] = []
+    for host in hosts:
+        if not isinstance(host, dict) or host.get("isDisabled"):
+            continue
+        host_uuid = host.get("uuid")
+        if not host_uuid:
+            continue
+        ib_uuid = _host_inbound_uuid(host)
+        address = (host.get("address") or "").strip()
+        raw_port = host.get("port")
+        try:
+            port = int(raw_port) if raw_port is not None else None
+        except (TypeError, ValueError):
+            port = None
+        out.append({
+            "uuid": str(host_uuid),
+            "api_url": api_url,
+            "name": host.get("remark") or address or str(host_uuid),
+            "host": address,
+            "port": port,
+            "online": bool(alive.get(ib_uuid, False)) if ib_uuid else False,
+            "load": int(load.get(ib_uuid, 0)) if ib_uuid else 0,
+        })
+    return out
 
 
 def _host_inbound_uuid(host: dict[str, Any]) -> str | None:

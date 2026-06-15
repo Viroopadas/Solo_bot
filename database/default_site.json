@@ -1384,7 +1384,7 @@
     "reachableLabel": "Доступен у вас",
     "blockedLabel": "Заблокирован у вас",
     "checkingLabel": "Проверка…",
-    "probePort": 8443,
+    "probePort": 443,
     "probeEnabled": true
    }
   }
