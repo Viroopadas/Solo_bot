@@ -38,6 +38,7 @@ from database import (
 from database.models import CouponUsage, Gift, GiftUsage, IdentityNotifPref, Key, Payment, WebNotification
 from database.referrals import get_referral_stats
 from database.web_notifications import count_unread_for_identity
+from logger import logger
 from utils.referral_codes import encode_referral_code
 
 
@@ -192,25 +193,28 @@ async def auth_summary(
     billing_user_id = actor.billing_user_id if actor and actor.billing_user_id is not None else None
     if billing_user_id is None:
         billing_user_id = await idb.ensure_billing_user_for_identity(session, identity)
-    balance = float(await get_balance(session, billing_user_id))
-    trial_status = await get_trial(session, billing_user_id)
-    keys = await get_keys(session, billing_user_id)
+    async def _safe(factory, default):
+        try:
+            async with session.begin_nested():
+                return await factory()
+        except Exception as exc:
+            logger.warning("[auth_summary] пропущена агрегация: {}", exc)
+            return default
+
+    async def _count(model, *conds) -> int:
+        r = await session.execute(select(func.count()).select_from(model).where(*conds))
+        return int(r.scalar_one() or 0)
+
+    balance = float(await _safe(lambda: get_balance(session, billing_user_id), 0.0) or 0.0)
+    trial_status = int(await _safe(lambda: get_trial(session, billing_user_id), 0) or 0)
+    keys = await _safe(lambda: get_keys(session, billing_user_id), None)
     keys_total = len(keys) if keys else 0
-    gifts_sent_r = await session.execute(
-        select(func.count()).select_from(Gift).where(Gift.sender_user_id == billing_user_id)
-    )
-    gifts_sent = gifts_sent_r.scalar_one() or 0
-    gifts_claimed_r = await session.execute(
-        select(func.count()).select_from(GiftUsage).where(GiftUsage.user_id == billing_user_id)
-    )
-    gifts_claimed = gifts_claimed_r.scalar_one() or 0
-    coupons_r = await session.execute(
-        select(func.count()).select_from(CouponUsage).where(CouponUsage.user_id == billing_user_id)
-    )
-    coupons_used = coupons_r.scalar_one() or 0
-    ref = await get_referral_stats(session, billing_user_id)
-    partner = await _resolve_partner_snapshot(session, int(billing_user_id))
-    unread_notifications = await count_unread_for_identity(session, identity.id)
+    gifts_sent = await _safe(lambda: _count(Gift, Gift.sender_user_id == billing_user_id), 0)
+    gifts_claimed = await _safe(lambda: _count(GiftUsage, GiftUsage.user_id == billing_user_id), 0)
+    coupons_used = await _safe(lambda: _count(CouponUsage, CouponUsage.user_id == billing_user_id), 0)
+    ref = await _safe(lambda: get_referral_stats(session, billing_user_id), {}) or {}
+    partner = await _safe(lambda: _resolve_partner_snapshot(session, int(billing_user_id)), {}) or {}
+    unread_notifications = int(await _safe(lambda: count_unread_for_identity(session, identity.id), 0) or 0)
     return AccountSummaryResponse(
         identity_id=identity.id,
         email=identity.email,
