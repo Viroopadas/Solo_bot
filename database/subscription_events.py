@@ -150,6 +150,39 @@ async def get_user_subscription_history(
     return [groups[c] for c in reversed(order)]
 
 
+async def get_recent_renewals(session: AsyncSession, client_id: str, limit: int = 5) -> list[dict]:
+    """Последние операции продления (event_type=renewed) по client_id, свежие первыми."""
+    if not client_id:
+        return []
+    rows = (
+        await session.execute(
+            select(
+                SubscriptionEvent.created_at,
+                SubscriptionEvent.tariff_id,
+                SubscriptionEvent.expiry_time,
+                SubscriptionEvent.source,
+                SubscriptionEvent.duration_days,
+                SubscriptionEvent.price_rub,
+            )
+            .where(SubscriptionEvent.client_id == client_id)
+            .where(SubscriptionEvent.event_type == "renewed")
+            .order_by(SubscriptionEvent.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    return [
+        {
+            "created_at": r.created_at,
+            "tariff_id": r.tariff_id,
+            "expiry_time": r.expiry_time,
+            "source": r.source,
+            "duration_days": r.duration_days,
+            "price_rub": r.price_rub,
+        }
+        for r in rows
+    ]
+
+
 async def backfill_from_payments(session: AsyncSession) -> int:
     """Ретроспективно засеивает журнал из истории платежей: первый успешный платёж
     юзера → created, последующие → renewed. Идемпотентно (пропускает, если уже сеяли)."""

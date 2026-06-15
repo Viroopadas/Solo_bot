@@ -114,6 +114,12 @@ def render_tariff_card(tariff: Tariff) -> tuple[str, InlineKeyboardMarkup]:
     cooldown_days = int(getattr(tariff, "cooldown_days", 0) or 0)
     cooldown_text = f"раз в {cooldown_days} дн." if cooldown_days > 0 else "Без задержки"
     visibility_text = describe_visibility(getattr(tariff, "visibility_rules", None))
+    description_raw = getattr(tariff, "description", None)
+    description_safe = (
+        description_raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        if description_raw
+        else "Не задано"
+    )
 
     text = (
         f"<b>📄 Тариф: {tariff.name}</b>\n"
@@ -128,6 +134,7 @@ def render_tariff_card(tariff: Tariff) -> tuple[str, InlineKeyboardMarkup]:
         f"Внешний сквад: <b>{external_squad_text}</b>\n"
         f"⏳ Задержка покупки: <b>{cooldown_text}</b>\n"
         f"👁 Видимость: <b>{visibility_text}</b>\n"
+        f"📄 Описание: {description_safe}\n"
         f"🔢 Позиция: <b>{sort_order}</b>\n"
         f"{'✅ Активен' if tariff.is_active else '⛔ Отключен'}"
     )

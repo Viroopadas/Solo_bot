@@ -51,7 +51,7 @@ from services.tariffs.visibility import filter_visible_tariffs
 
 from .key_mode.key_cluster_mode import key_cluster_mode
 from .key_mode.key_country_mode import key_country_mode
-from .utils import add_tariff_button_generic
+from .utils import add_tariff_button_generic, format_tariff_descriptions
 
 
 router = Router()
@@ -347,7 +347,7 @@ async def handle_key_creation(
 
         await edit_or_send_message(
             target_message=target_message,
-            text=SELECT_TARIFF_PLAN_MSG + discount_message,
+            text=SELECT_TARIFF_PLAN_MSG + format_tariff_descriptions(grouped_tariffs.get(None, [])) + discount_message,
             reply_markup=builder.as_markup(),
             media_path=os.path.join("img", "tariffs.jpg"),
             disable_web_page_preview=False,
@@ -424,7 +424,7 @@ async def show_tariffs_in_subgroup_user(callback: CallbackQuery, state: FSMConte
 
     await edit_or_send_message(
         target_message=callback.message,
-        text=f"<b>{subgroup}</b>\n\nВыберите тариф:",
+        text=f"<b>{subgroup}</b>\n\nВыберите тариф:" + format_tariff_descriptions(filtered),
         reply_markup=builder.as_markup(),
     )
 
@@ -489,7 +489,7 @@ async def back_to_subgroup_tariffs(callback: CallbackQuery, state: FSMContext, s
 
     await edit_or_send_message(
         target_message=callback.message,
-        text=f"<b>{subgroup}</b>\n\nВыберите тариф:",
+        text=f"<b>{subgroup}</b>\n\nВыберите тариф:" + format_tariff_descriptions(filtered),
         reply_markup=builder.as_markup(),
     )
     await callback.answer()

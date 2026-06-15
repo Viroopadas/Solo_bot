@@ -58,7 +58,7 @@ from services.operations import renew_key_in_cluster
 from services.payments.currency_rates import format_for_user
 from services.tariffs.tariff_display import GB, get_effective_limits_for_key
 
-from .utils import add_tariff_button_generic, build_key_callback, key_owned_by_user, resolve_key
+from .utils import add_tariff_button_generic, build_key_callback, format_tariff_descriptions, key_owned_by_user, resolve_key
 
 
 router = Router()
@@ -272,6 +272,7 @@ async def process_callback_renew_key(callback_query: CallbackQuery, state: FSMCo
                 expiry_date=datetime.utcfromtimestamp(expiry_time / 1000).strftime("%Y-%m-%d %H:%M:%S"),
             )
             + addon_warning
+            + format_tariff_descriptions(grouped_tariffs.get(None, []))
             + discount_message
         )
 
@@ -433,7 +434,7 @@ async def show_tariffs_in_renew_subgroup(callback: CallbackQuery, state: FSMCont
 
         await edit_or_send_message(
             target_message=callback.message,
-            text=f"<b>{subgroup}</b>\n\nВыберите тариф:{discount_message}",
+            text=f"<b>{subgroup}</b>\n\nВыберите тариф:" + format_tariff_descriptions(filtered) + discount_message,
             reply_markup=final_markup,
         )
 

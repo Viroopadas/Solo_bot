@@ -488,6 +488,7 @@ async def ask_new_value(callback: CallbackQuery, state: FSMContext):
         "vless": "VLESS (да/нет)",
         "external_squad": "внешний сквад (0 — убрать)",
         "cooldown_days": "задержку между покупками в днях (0 — без задержки)",
+        "description": "описание тарифа — что в него входит («-» — убрать)",
     }
 
     await callback.message.edit_text(
@@ -604,6 +605,15 @@ async def apply_edit(message: Message, state: FSMContext, session: AsyncSession)
         if value in ("", "0", "-"):
             value = None
         setattr(tariff, field, value)
+        tariff.updated_at = datetime.utcnow()
+        await state.clear()
+
+        text, markup = render_tariff_card(tariff)
+        await message.answer(text=text, reply_markup=markup)
+        return
+
+    if field == "description":
+        tariff.description = None if value in ("", "0", "-") else value[:1000]
         tariff.updated_at = datetime.utcnow()
         await state.clear()
 

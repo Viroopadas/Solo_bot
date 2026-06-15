@@ -46,6 +46,23 @@ async def resolve_key(session: AsyncSession, tg_id: int, key_ref: str | int | No
     return None
 
 
+def _escape_html(value: str) -> str:
+    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def format_tariff_descriptions(tariffs: list[dict[str, Any]]) -> str:
+    lines = []
+    for tariff in tariffs:
+        desc = (tariff.get("description") or "").strip()
+        if not desc:
+            continue
+        name = _escape_html(str(tariff.get("name", "")))
+        lines.append(f"• <b>{name}</b> — {_escape_html(desc)}")
+    if not lines:
+        return ""
+    return "\n\n" + "\n".join(lines)
+
+
 async def add_tariff_button_generic(
     builder: InlineKeyboardBuilder,
     tariff: dict[str, Any],

@@ -21,6 +21,7 @@ class Tariff(DictLikeMixin, Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
     subgroup_title = Column(String, nullable=True)
+    description = Column(String, nullable=True)
     sort_order = Column(Integer, nullable=True)
     vless = Column(Boolean, default=False)
     external_squad: Mapped[str | None] = mapped_column(String(64), nullable=True)
