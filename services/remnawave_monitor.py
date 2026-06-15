@@ -247,6 +247,7 @@ def _build_connection_targets(
     """
     alive = _build_inbound_alive_map(nodes)
     load = _build_inbound_load_map(nodes)
+    any_node_alive = any(_node_serves_traffic(n) for n in nodes if isinstance(n, dict))
     out: list[dict[str, Any]] = []
     for host in hosts:
         if not isinstance(host, dict) or host.get("isDisabled"):
@@ -265,6 +266,10 @@ def _build_connection_targets(
             position = int(host.get("viewPosition") or 0)
         except (TypeError, ValueError):
             position = 0
+        if ib_uuid and ib_uuid in alive:
+            online = bool(alive[ib_uuid])
+        else:
+            online = any_node_alive
         out.append({
             "uuid": str(host_uuid),
             "api_url": api_url,
@@ -272,7 +277,7 @@ def _build_connection_targets(
             "host": address,
             "port": port,
             "position": position,
-            "online": bool(alive.get(ib_uuid, False)) if ib_uuid else False,
+            "online": online,
             "load": int(load.get(ib_uuid, 0)) if ib_uuid else 0,
         })
     return out
