@@ -22,6 +22,44 @@ HOST_ROTATION_DEFAULT_INTERVAL_MIN = 60
 TICK_SLEEP_SEC = 30
 
 
+async def get_client_node_statuses(session) -> list[dict]:
+    """Статусы нод для показа клиенту.
+
+    Скрывает выключенные вручную: isDisabled в панели Remnawave и servers.enabled=false в боте.
+    Возвращает [{uuid, online, name, load, address}] — address нужен для браузерной пробы
+    доступности с устройства клиента.
+    """
+    states = dict(REMNAWAVE_CONFIG.get("NODE_HEALTH_LAST_STATES") or {})
+    if not states:
+        return []
+
+    servers = await get_servers(session, include_enabled=True)
+    enabled_by_api: dict[str, bool] = {}
+    for server_list in servers.values():
+        for s in server_list:
+            api = (s.get("api_url") or "").rstrip("/")
+            if api:
+                enabled_by_api[api] = bool(s.get("enabled"))
+
+    out: list[dict] = []
+    for key, info in states.items():
+        api_url, _, uuid = str(key).partition("::")
+        if not uuid:
+            continue
+        if info.get("isDisabled"):
+            continue
+        if enabled_by_api.get(api_url.rstrip("/"), True) is False:
+            continue
+        out.append({
+            "uuid": uuid,
+            "online": bool(info.get("alive")),
+            "name": info.get("name") or "",
+            "load": int(info.get("usersOnline") or 0),
+            "address": info.get("address") or "",
+        })
+    return out
+
+
 async def _collect_remnawave_panels() -> list[str]:
     async with async_session_maker() as session:
         servers = await get_servers(session, include_enabled=True)
@@ -124,6 +162,7 @@ async def _node_health_tick(bot) -> None:
                 "address": node.get("address") or "",
                 "isDisabled": bool(node.get("isDisabled")),
                 "lastStatusMessage": node.get("lastStatusMessage") or "",
+                "usersOnline": int(node.get("usersOnline") or 0),
             }
             previous = last_states.get(state_key)
             previously_alive = previous.get("alive", True) if previous else True

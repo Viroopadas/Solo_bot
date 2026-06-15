@@ -1345,6 +1345,48 @@
     "peakLabel": "Пик",
     "lastLabel": "Сейчас"
    }
+  },
+  {
+   "type": "defaultNodeStatus",
+   "order": 25,
+   "data": {
+    "col": 5,
+    "colSpan": 18,
+    "fineCol": 21,
+    "fineColSpan": 71,
+    "zIndex": 9,
+    "fontScale": 1,
+    "monoFontFamily": "",
+    "mobileGridV2": true,
+    "mobileHidden": false,
+    "mobileCol": 0,
+    "mobileColSpan": 24,
+    "cabinetTabId": "keys",
+    "cabinetTabGroup": "cabinet",
+    "row": 25,
+    "fineRow": 101,
+    "rowSpan": 9,
+    "fineRowSpan": 36,
+    "mobileRow": 80,
+    "mobileRowSpan": 14,
+    "mobileOrder": 80,
+    "panelHeader": "Статус серверов",
+    "hint": "",
+    "onlineLabel": "Работает",
+    "offlineLabel": "Не работает",
+    "emptyText": "Нет данных о серверах",
+    "loadingText": "Загрузка…",
+    "items": [],
+    "totalFormat": "Всего {total} · онлайн {online} · недоступно {offline}",
+    "pageSize": 6,
+    "prevLabel": "Назад",
+    "nextLabel": "Вперёд",
+    "reachableLabel": "Доступен у вас",
+    "blockedLabel": "Заблокирован у вас",
+    "checkingLabel": "Проверка…",
+    "probePort": 8443,
+    "probeEnabled": true
+   }
   }
  ],
  "landing": [

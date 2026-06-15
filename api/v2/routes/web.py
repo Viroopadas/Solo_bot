@@ -1357,6 +1357,14 @@ async def get_analytics_overview(
             select(func.count()).select_from(Identity).where(Identity.created_at >= since_naive)
         )
     ) or 0
+    registrations_tg = (
+        await session.scalar(
+            select(func.count())
+            .select_from(Identity)
+            .where(Identity.created_at >= since_naive, Identity.tg_id.isnot(None))
+        )
+    ) or 0
+    registrations_web = int(registrations) - int(registrations_tg)
 
     web_payment_marker = Payment.metadata_["payment_flow"].astext.isnot(None)
     payments_row = (
@@ -1506,6 +1514,8 @@ async def get_analytics_overview(
             "visitorsWeb": src_split["web"]["visitors"],
             "visitorsWebapp": src_split["webapp"]["visitors"],
             "registrations": int(registrations),
+            "registrationsTg": int(registrations_tg),
+            "registrationsWeb": int(registrations_web),
             "checkoutVisitors": int(checkout_visitors),
             "payments": int(payments_row.cnt or 0) if payments_row else 0,
             "payers": int(payments_row.payers or 0) if payments_row else 0,
@@ -2052,3 +2062,23 @@ async def get_logs_health(_identity=Depends(verify_identity_admin)):
     except Exception:
         out["botVersion"] = ""
     return out
+
+
+@router.get("/api/web/node-status")
+async def web_node_status(session: AsyncSession = Depends(get_session)):
+    """Статусы нод для блока в кабинете (скрыты выключенные вручную). Отдаёт address
+    для браузерной пробы доступности с устройства клиента."""
+    from services.remnawave_monitor import get_client_node_statuses
+
+    return {"nodes": await get_client_node_statuses(session)}
+
+
+@router.get("/api/web/node-status/admin")
+async def web_node_status_admin(
+    session: AsyncSession = Depends(get_session),
+    identity=Depends(verify_identity_admin),
+):
+    """Полный список нод для редактора блока — только админ."""
+    from services.remnawave_monitor import get_client_node_statuses
+
+    return {"nodes": await get_client_node_statuses(session)}

@@ -84,7 +84,14 @@ async def send_abandoned_checkout_reminders(session: AsyncSession) -> int:
             logger.warning("[AbandonedCheckout] tg-сообщение {} не отправлено: {}", tg_id, exc)
 
         try:
-            await notify_web(session, tg_id=tg_id, type="payment", title=title, message=body)
+            await notify_web(
+                session,
+                tg_id=tg_id,
+                type="payment",
+                title=title,
+                message=body,
+                data={"href": "/dashboard?cabinetTab=keys"},
+            )
         except Exception:
             pass
 
