@@ -247,7 +247,7 @@ def _build_connection_targets(
     """
     alive = _build_inbound_alive_map(nodes)
     load = _build_inbound_load_map(nodes)
-    any_node_alive = any(_node_serves_traffic(n) for n in nodes if isinstance(n, dict))
+    any_node_alive = any(_is_node_alive(n) for n in nodes if isinstance(n, dict))
     out: list[dict[str, Any]] = []
     for host in hosts:
         if not isinstance(host, dict) or host.get("isDisabled"):

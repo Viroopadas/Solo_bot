@@ -503,7 +503,7 @@ async def render_user_config_screen(
     def _dev_label(v: int) -> str:
         if v == 0:
             return UNLIMITED_DEVICES_LABEL.capitalize()
-        return f"{v} {get_plural_form(v, 'устройство', 'устройства', 'устройств')}"
+        return f"{v} устр."
 
     def _traf_label(v: int) -> str:
         if v == 0:
