@@ -403,7 +403,9 @@ class BroadcastService:
             clean = re.sub(r"<[^>]+>", "", text).strip()
             lines = clean.split("\n", 1)
             title = (lines[0][:120] + "…") if len(lines[0]) > 120 else lines[0]
-            body = lines[1].strip()[:300] if len(lines) > 1 else ""
+            body = lines[1].strip() if len(lines) > 1 else ""
+            if len(body) > 4000:
+                body = body[:4000] + "…"
 
             session = self._session
             if session is None:
