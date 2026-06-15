@@ -1384,6 +1384,7 @@
     "reachableLabel": "Доступен у вас",
     "blockedLabel": "Заблокирован у вас",
     "checkingLabel": "Проверка…",
+    "pingFormat": "≈ {ms} мс",
     "probePort": 443,
     "probeEnabled": true
    }

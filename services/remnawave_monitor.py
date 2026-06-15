@@ -58,6 +58,7 @@ async def get_client_node_statuses(session) -> list[dict]:
             "load": int(tgt.get("load") or 0),
             "host": tgt.get("host") or "",
             "port": tgt.get("port"),
+            "position": int(tgt.get("position") or 0),
         })
     return out
 
@@ -246,6 +247,7 @@ def _build_connection_targets(
             "name": host.get("remark") or address or str(host_uuid),
             "host": address,
             "port": port,
+            "position": int(host.get("viewPosition") or 0),
             "online": bool(alive.get(ib_uuid, False)) if ib_uuid else False,
             "load": int(load.get(ib_uuid, 0)) if ib_uuid else 0,
         })
