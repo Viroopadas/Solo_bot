@@ -50,17 +50,39 @@ def _escape_html(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def format_tariff_descriptions(tariffs: list[dict[str, Any]]) -> str:
-    lines = []
-    for tariff in tariffs:
-        desc = (tariff.get("description") or "").strip()
-        if not desc:
-            continue
-        name = _escape_html(str(tariff.get("name", "")))
-        lines.append(f"• <b>{name}</b> — {_escape_html(desc)}")
-    if not lines:
+def format_tariff_descriptions(tariffs: list[dict[str, Any]], total_limit: int = 500) -> str:
+    """Компактный блок описаний для списка тарифов рядом с кнопками.
+
+    Описание схлопывается в одну строку. Длина тизера подбирается под число
+    тарифов с описанием, а общий объём ограничен total_limit, чтобы caption
+    не превысил лимит Telegram (1024) даже вместе со скидочным блоком.
+    """
+    described = [
+        (str(t.get("name", "")), " ".join((t.get("description") or "").split()))
+        for t in tariffs
+        if (t.get("description") or "").strip()
+    ]
+    if not described:
         return ""
-    return "\n\n" + "\n".join(lines)
+
+    per_limit = max(60, total_limit // len(described))
+    lines: list[str] = []
+    used = 0
+    hidden = 0
+    for name, desc in described:
+        if len(desc) > per_limit:
+            desc = desc[: per_limit - 1].rstrip() + "…"
+        line = f"• <b>{_escape_html(name)}</b> — {_escape_html(desc)}"
+        if used + len(line) + 1 > total_limit:
+            hidden += 1
+            continue
+        lines.append(line)
+        used += len(line) + 1
+
+    block = "\n\n" + "\n".join(lines)
+    if hidden:
+        block += f"\n<i>…и ещё {hidden}</i>"
+    return block
 
 
 async def add_tariff_button_generic(
