@@ -578,7 +578,7 @@ async def sync_hosts_with_node_state(bot=None) -> dict[str, Any]:
 
 
 async def remnawave_monitor_loop(bot, _sessionmaker) -> None:
-    last_node_tick = 0.0
+    last_node_tick = -1e9
     last_rotation_tick = 0.0
     last_sync_tick = 0.0
 
