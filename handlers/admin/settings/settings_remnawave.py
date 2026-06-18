@@ -9,6 +9,7 @@ from config import REMNAWAVE_LOGIN, REMNAWAVE_PASSWORD, REMNAWAVE_TOKEN_LOGIN_EN
 from core.settings.remnawave_config import (
     REMNAWAVE_CONFIG,
     get_host_rotation_allowed,
+    get_node_health_allowed,
     is_host_auto_disable_enabled,
     update_remnawave_config,
 )
@@ -19,6 +20,7 @@ from panels.remnawave import RemnawaveAPI
 from ..panel.keyboard import AdminPanelCallback
 from .keyboard import (
     REMNAWAVE_HOSTS_PER_PAGE,
+    build_settings_remnawave_health_nodes_kb,
     build_settings_remnawave_hosts_kb,
     build_settings_remnawave_kb,
     build_settings_remnawave_node_kb,
@@ -72,6 +74,7 @@ def _root_text() -> str:
 def _node_text() -> str:
     state = "✅ Включена" if _node_health_enabled() else "❌ Выключена"
     auto_state = "✅ Включено" if _auto_disable_enabled() else "❌ Выключено"
+    selected_count = len(get_node_health_allowed())
     return (
         "<b>🌀 Проверка нод</b>\n\n"
         "Бот опрашивает API панели и следит, какие ноды отвалились.\n"
@@ -85,6 +88,9 @@ def _node_text() -> str:
         "Когда нода снова в строю — хосты включаются обратно и заново ротируются.\n"
         "Бот трогает только те хосты, что выключил сам: то, что ты отключил вручную, "
         "останется как есть.\n\n"
+        f"<b>Нод выбрано для проверки:</b> {selected_count} (0 = проверяются все)\n"
+        "Если выбрать конкретные ноды — бот проверяет только их, а остальные не трогает "
+        "(удобно для нод авто-балансировки, которые иначе помечались бы как упавшие).\n\n"
         "Проверка идёт на том же интервале, что и мониторинг нод выше."
     )
 
@@ -158,6 +164,63 @@ async def _fetch_all_hosts() -> list[tuple[str, dict[str, Any]]]:
                 if host.get("uuid"):
                     result.append((api_url, host))
     return result
+
+
+async def _fetch_all_nodes() -> list[tuple[str, dict[str, Any]]]:
+    async with async_session_maker() as session:
+        servers = await get_servers(session, include_enabled=True)
+
+    seen_panels: set[str] = set()
+    result: list[tuple[str, dict[str, Any]]] = []
+    for cluster in servers.values():
+        for srv in cluster:
+            if srv.get("panel_type") != "remnawave":
+                continue
+            api_url = (srv.get("api_url") or "").strip()
+            if not api_url or api_url in seen_panels:
+                continue
+            seen_panels.add(api_url)
+            api = RemnawaveAPI(api_url)
+            try:
+                if not REMNAWAVE_TOKEN_LOGIN_ENABLED:
+                    ok = await api.login(REMNAWAVE_LOGIN, REMNAWAVE_PASSWORD)
+                    if not ok:
+                        continue
+                nodes = await api.get_all_nodes() or []
+            except Exception as exc:
+                logger.warning("[Remnawave-Admin] Ошибка получения нод с {}: {}", api_url, exc)
+                continue
+            finally:
+                try:
+                    await api.aclose()
+                except Exception:
+                    pass
+            if not isinstance(nodes, list):
+                continue
+            for node in nodes:
+                if node.get("uuid"):
+                    result.append((api_url, node))
+    return result
+
+
+def _health_nodes_text(nodes: list[tuple[str, dict[str, Any]]], allowed: set[str]) -> str:
+    if not nodes:
+        return (
+            "<b>🖧 Ноды Remnawave</b>\n\n"
+            "Не удалось получить список нод. Проверь, что панель доступна "
+            "и API-токен имеет права на чтение <code>/nodes</code>."
+        )
+    total = len(nodes)
+    selected = sum(1 for _, n in nodes if str(n.get("uuid")) in allowed)
+    return (
+        "<b>🖧 Выбор нод для проверки</b>\n\n"
+        f"Всего нод: <b>{total}</b>\n"
+        f"Выбрано: <b>{selected}</b>\n\n"
+        "Жми по строке, чтобы добавить ноду в проверку или убрать. "
+        "Бот проверяет и авто-отключает хосты только у ✅ выбранных нод. "
+        "Если не выбрано ни одной — проверяются все ноды (как сейчас). "
+        "Просто не выбирай ноды авто-балансировки — и бот не будет их трогать."
+    )
 
 
 @router.callback_query(AdminPanelCallback.filter(F.action == "settings_remnawave"))
@@ -450,4 +513,86 @@ async def clear_page(callback: CallbackQuery, callback_data: AdminPanelCallback)
     await callback.message.edit_text(
         text=_hosts_text(hosts, allowed),
         reply_markup=build_settings_remnawave_hosts_kb(page, hosts, allowed),
+    )
+
+
+@router.callback_query(AdminPanelCallback.filter(F.action == "rw_node_sel"))
+async def open_health_nodes(callback: CallbackQuery, callback_data: AdminPanelCallback) -> None:
+    await callback.answer("Загружаю ноды…")
+    nodes = await _fetch_all_nodes()
+    allowed = get_node_health_allowed()
+    page = max(1, int(callback_data.page or 1))
+    await callback.message.edit_text(
+        text=_health_nodes_text(nodes, allowed),
+        reply_markup=build_settings_remnawave_health_nodes_kb(page, nodes, allowed),
+    )
+
+
+@router.callback_query(AdminPanelCallback.filter(F.action == "rw_node_sel_toggle"))
+async def toggle_health_node(callback: CallbackQuery, callback_data: AdminPanelCallback) -> None:
+    idx = int(callback_data.page or 0)
+    nodes = await _fetch_all_nodes()
+    if idx < 0 or idx >= len(nodes):
+        await callback.answer("Нода не найдена", show_alert=True)
+        return
+    _, node = nodes[idx]
+    node_uuid = str(node.get("uuid"))
+    allowed = get_node_health_allowed()
+    if node_uuid in allowed:
+        allowed.discard(node_uuid)
+        toast = "▫️ Нода убрана из проверки"
+    else:
+        allowed.add(node_uuid)
+        toast = "✅ Нода добавлена в проверку"
+
+    new_cfg = dict(REMNAWAVE_CONFIG)
+    new_cfg["NODE_HEALTH_ALLOWED"] = sorted(allowed)
+    async with async_session_maker() as session:
+        await update_remnawave_config(session, new_cfg)
+
+    page = max(1, idx // REMNAWAVE_HOSTS_PER_PAGE + 1)
+    await callback.answer(toast)
+    await callback.message.edit_text(
+        text=_health_nodes_text(nodes, allowed),
+        reply_markup=build_settings_remnawave_health_nodes_kb(page, nodes, allowed),
+    )
+
+
+@router.callback_query(AdminPanelCallback.filter(F.action == "rw_node_sel_all"))
+async def select_all_health_nodes_on_page(callback: CallbackQuery, callback_data: AdminPanelCallback) -> None:
+    nodes = await _fetch_all_nodes()
+    allowed = get_node_health_allowed()
+    page = max(1, int(callback_data.page or 1))
+    start = (page - 1) * REMNAWAVE_HOSTS_PER_PAGE
+    for _, node in nodes[start : start + REMNAWAVE_HOSTS_PER_PAGE]:
+        uuid = str(node.get("uuid"))
+        if uuid:
+            allowed.add(uuid)
+    new_cfg = dict(REMNAWAVE_CONFIG)
+    new_cfg["NODE_HEALTH_ALLOWED"] = sorted(allowed)
+    async with async_session_maker() as session:
+        await update_remnawave_config(session, new_cfg)
+    await callback.answer("✅ Выбраны")
+    await callback.message.edit_text(
+        text=_health_nodes_text(nodes, allowed),
+        reply_markup=build_settings_remnawave_health_nodes_kb(page, nodes, allowed),
+    )
+
+
+@router.callback_query(AdminPanelCallback.filter(F.action == "rw_node_sel_clear"))
+async def clear_health_nodes_page(callback: CallbackQuery, callback_data: AdminPanelCallback) -> None:
+    nodes = await _fetch_all_nodes()
+    allowed = get_node_health_allowed()
+    page = max(1, int(callback_data.page or 1))
+    start = (page - 1) * REMNAWAVE_HOSTS_PER_PAGE
+    for _, node in nodes[start : start + REMNAWAVE_HOSTS_PER_PAGE]:
+        allowed.discard(str(node.get("uuid")))
+    new_cfg = dict(REMNAWAVE_CONFIG)
+    new_cfg["NODE_HEALTH_ALLOWED"] = sorted(allowed)
+    async with async_session_maker() as session:
+        await update_remnawave_config(session, new_cfg)
+    await callback.answer("▫️ Сброшено")
+    await callback.message.edit_text(
+        text=_health_nodes_text(nodes, allowed),
+        reply_markup=build_settings_remnawave_health_nodes_kb(page, nodes, allowed),
     )

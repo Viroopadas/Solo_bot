@@ -12,11 +12,14 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    WebAppInfo,
 )
-from aiogram.utils.formatting import BlockQuote, Bold, Text
+from aiogram.utils.formatting import BlockQuote, Bold, Code, Text
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from config import USERNAME_BOT
 
 from database import (
     get_key_details,
@@ -36,9 +39,12 @@ from ..panel.keyboard import (
     build_admin_back_kb,
 )
 from .keyboard import (
+    SITE_TAB_LABELS,
     AdminUserEditorCallback,
     build_editor_kb,
     build_user_edit_kb,
+    build_user_site_send_kb,
+    build_user_site_tabs_kb,
 )
 from .users_states import UserEditorState
 
@@ -528,6 +534,8 @@ async def process_user_search(
         f"🎁 Триал: {trial_status}\n",
     )
 
+    body += Text("🌐 Кабинет: ", Code(f"https://t.me/{USERNAME_BOT}?start=tab_keys"), "\n")
+
     if referrer_text:
         body += Text(referrer_text, "\n")
 
@@ -583,6 +591,99 @@ async def handle_users_editor(
         edit=callback_data.edit,
         actor_tg_id=callback.from_user.id,
     )
+
+
+@router.callback_query(
+    AdminUserEditorCallback.filter(F.action == "users_site"),
+    IsAdminFilter(),
+)
+async def handle_users_site(callback: CallbackQuery, callback_data: AdminUserEditorCallback):
+    text = (
+        "🌐 <b>Ссылки на кабинет</b>\n\n"
+        "Выберите вкладку — бот покажет ссылку, которую можно отправить клиенту. "
+        "По ней откроется его личный кабинет на нужной вкладке."
+    )
+    try:
+        await callback.message.edit_text(
+            text=text,
+            reply_markup=build_user_site_tabs_kb(callback_data.tg_id),
+            disable_web_page_preview=True,
+        )
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(
+    AdminUserEditorCallback.filter(F.action == "users_site_tab"),
+    IsAdminFilter(),
+)
+async def handle_users_site_tab(callback: CallbackQuery, callback_data: AdminUserEditorCallback):
+    tab = str(callback_data.data or "")
+    label = SITE_TAB_LABELS.get(tab)
+    if not label:
+        await callback.answer("Неизвестная вкладка", show_alert=True)
+        return
+    text = Text(
+        "🌐 Вкладка: ",
+        Bold(label),
+        "\n\n",
+        f"Нажмите «Отправить» — клиент получит в чате с ботом кнопку, "
+        f"открывающую личный кабинет на вкладке «{label}».",
+    ).as_html()
+    try:
+        await callback.message.edit_text(
+            text=text,
+            reply_markup=build_user_site_send_kb(callback_data.tg_id, tab),
+            disable_web_page_preview=True,
+        )
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(
+    AdminUserEditorCallback.filter(F.action == "users_site_send"),
+    IsAdminFilter(),
+)
+async def handle_users_site_send(callback: CallbackQuery, callback_data: AdminUserEditorCallback):
+    tab = str(callback_data.data or "")
+    label = SITE_TAB_LABELS.get(tab)
+    if not label:
+        await callback.answer("Неизвестная вкладка", show_alert=True)
+        return
+
+    from core.settings.web_config import get_site_url, is_web_enabled
+
+    if not is_web_enabled():
+        await callback.answer("Веб-кабинет отключён", show_alert=True)
+        return
+    site_url = get_site_url()
+    if not site_url:
+        await callback.answer("Не задан адрес сайта", show_alert=True)
+        return
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=f"🌐 {label}",
+            web_app=WebAppInfo(url=f"{site_url}/dashboard?tab={tab}&webapp=1"),
+        )
+    )
+
+    from bot import bot
+
+    try:
+        await bot.send_message(
+            callback_data.tg_id,
+            "Откройте раздел в личном кабинете 👇",
+            reply_markup=builder.as_markup(),
+        )
+    except Exception as e:
+        logger.warning(f"[users_site_send] send to {callback_data.tg_id} failed: {e}")
+        await callback.answer("❌ Не удалось отправить (клиент не запускал бота?)", show_alert=True)
+        return
+    await callback.answer(f"✅ Отправлено клиенту: {label}", show_alert=True)
 
 
 SUB_HISTORY_LIMIT = 20

@@ -342,8 +342,80 @@ def build_settings_remnawave_node_kb(
         )
     builder.row(
         InlineKeyboardButton(
+            text="🖧 Выбрать ноды для проверки",
+            callback_data=AdminPanelCallback(action="rw_node_sel").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
             text=BACK,
             callback_data=AdminPanelCallback(action="settings_remnawave").pack(),
+        )
+    )
+    return builder.as_markup()
+
+
+def build_settings_remnawave_health_nodes_kb(
+    page: int,
+    nodes: list[tuple[str, dict[str, Any]]],
+    allowed: set[str],
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    total_pages = max(1, (len(nodes) + REMNAWAVE_HOSTS_PER_PAGE - 1) // REMNAWAVE_HOSTS_PER_PAGE)
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * REMNAWAVE_HOSTS_PER_PAGE
+    chunk = nodes[start : start + REMNAWAVE_HOSTS_PER_PAGE]
+
+    for idx, (_, node) in enumerate(chunk):
+        node_uuid = str(node.get("uuid"))
+        marker = "✅" if node_uuid in allowed else "▫️"
+        name = (node.get("name") or node.get("address") or node_uuid)[:30]
+        global_idx = start + idx
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{marker} {name}",
+                callback_data=AdminPanelCallback(action="rw_node_sel_toggle", page=global_idx).pack(),
+            )
+        )
+
+    if total_pages > 1:
+        nav_row: list[InlineKeyboardButton] = []
+        if page > 1:
+            nav_row.append(
+                InlineKeyboardButton(
+                    text="⬅️",
+                    callback_data=AdminPanelCallback(action="rw_node_sel", page=page - 1).pack(),
+                )
+            )
+        nav_row.append(
+            InlineKeyboardButton(
+                text=f"{page}/{total_pages}",
+                callback_data=AdminPanelCallback(action="rw_node_sel", page=page).pack(),
+            )
+        )
+        if page < total_pages:
+            nav_row.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=AdminPanelCallback(action="rw_node_sel", page=page + 1).pack(),
+                )
+            )
+        builder.row(*nav_row)
+
+    builder.row(
+        InlineKeyboardButton(
+            text="✅ Выбрать все на странице",
+            callback_data=AdminPanelCallback(action="rw_node_sel_all", page=page).pack(),
+        ),
+        InlineKeyboardButton(
+            text="▫️ Сбросить страницу",
+            callback_data=AdminPanelCallback(action="rw_node_sel_clear", page=page).pack(),
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=BACK,
+            callback_data=AdminPanelCallback(action="rw_node_menu").pack(),
         )
     )
     return builder.as_markup()

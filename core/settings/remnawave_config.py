@@ -89,3 +89,10 @@ def get_host_rotation_allowed() -> set[str]:
     if not isinstance(raw, list):
         return set()
     return {str(uuid) for uuid in raw if uuid}
+
+
+def get_node_health_allowed() -> set[str]:
+    raw = REMNAWAVE_CONFIG.get("NODE_HEALTH_ALLOWED") or []
+    if not isinstance(raw, list):
+        return set()
+    return {str(uuid) for uuid in raw if uuid}

@@ -7,6 +7,7 @@ from core.settings.remnawave_config import (
     REMNAWAVE_CONFIG,
     get_host_auto_disabled,
     get_host_rotation_allowed,
+    get_node_health_allowed,
     is_host_auto_disable_enabled,
     is_host_rotation_enabled,
     is_node_health_enabled,
@@ -156,6 +157,7 @@ async def _node_health_tick(bot) -> None:
         return
 
     last_states: dict[str, dict[str, Any]] = dict(REMNAWAVE_CONFIG.get("NODE_HEALTH_LAST_STATES") or {})
+    allowed = get_node_health_allowed()
     next_states: dict[str, dict[str, Any]] = {}
     next_targets: list[dict[str, Any]] = []
     next_squad_inbounds: dict[str, list[str]] = {}
@@ -194,6 +196,8 @@ async def _node_health_tick(bot) -> None:
         for node in nodes:
             uuid = node.get("uuid")
             if not uuid:
+                continue
+            if allowed and str(uuid) not in allowed:
                 continue
             alive = _is_node_alive(node)
             state_key = f"{api_url}::{uuid}"
@@ -484,9 +488,10 @@ def _node_serves_traffic(node: dict[str, Any]) -> bool:
 
 def _build_inbound_alive_map(nodes: list[dict[str, Any]]) -> dict[str, bool]:
     """Для каждого inbound — есть ли хотя бы одна живая нода, которая его обслуживает."""
+    allowed = get_node_health_allowed()
     alive: dict[str, bool] = {}
     for node in nodes:
-        serving = _node_serves_traffic(node)
+        serving = _node_serves_traffic(node) or (bool(allowed) and str(node.get("uuid") or "") not in allowed)
         inbounds = (node.get("configProfile") or {}).get("activeInbounds") or []
         for inbound in inbounds:
             inbound_uuid = inbound.get("uuid")

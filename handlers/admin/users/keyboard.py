@@ -74,6 +74,13 @@ async def build_user_edit_kb(
 
     builder.row(
         InlineKeyboardButton(
+            text="🌐 Сайт",
+            callback_data=AdminUserEditorCallback(action="users_site", tg_id=tg_id).pack(),
+        )
+    )
+
+    builder.row(
+        InlineKeyboardButton(
             text="🤝 Выгрузить рефералов",
             callback_data=AdminUserEditorCallback(action="users_export_referrals", tg_id=tg_id).pack(),
         ),
@@ -486,6 +493,49 @@ def build_key_delete_kb(tg_id: int) -> InlineKeyboardMarkup:
     )
     builder.row(build_editor_back_btn(tg_id))
     builder.adjust(1)
+    return builder.as_markup()
+
+
+SITE_TABS = [
+    ("keys", "🔑 Подписки"),
+    ("profile", "👤 Профиль"),
+    ("instructions", "📖 Инструкции"),
+    ("referrals", "🤝 Рефералы"),
+    ("partners", "💼 Партнёры"),
+    ("gifts", "🎁 Подарки"),
+    ("notifications", "🔔 Уведомления"),
+]
+SITE_TAB_LABELS = dict(SITE_TABS)
+
+
+def build_user_site_tabs_kb(tg_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for tab_id, label in SITE_TABS:
+        builder.row(
+            InlineKeyboardButton(
+                text=label,
+                callback_data=AdminUserEditorCallback(action="users_site_tab", tg_id=tg_id, data=tab_id).pack(),
+            )
+        )
+    builder.row(build_editor_btn(BACK, tg_id, edit=True))
+    return builder.as_markup()
+
+
+def build_user_site_send_kb(tg_id: int, tab: str) -> InlineKeyboardMarkup:
+    label = SITE_TAB_LABELS.get(tab, "")
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=f"📤 Отправить «{label}»",
+            callback_data=AdminUserEditorCallback(action="users_site_send", tg_id=tg_id, data=tab).pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=BACK,
+            callback_data=AdminUserEditorCallback(action="users_site", tg_id=tg_id).pack(),
+        )
+    )
     return builder.as_markup()
 
 
