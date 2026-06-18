@@ -7,6 +7,7 @@ import pytz
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import (
@@ -602,7 +603,14 @@ async def send_daily_stats_report(session: AsyncSession):
             f"⏱️ <i>Сформировано: {update_time} МСК</i>"
         )
 
+        from database.models import Admin
+
+        moderator_ids = set(
+            (await session.execute(select(Admin.tg_id).where(Admin.role == "moderator"))).scalars().all()
+        )
         for admin_id in ADMIN_ID:
+            if admin_id in moderator_ids:
+                continue
             await bot.send_message(admin_id, text)
 
     except Exception as e:

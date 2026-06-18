@@ -1866,6 +1866,367 @@ async def install_default_design(
     return {"ok": True, "seeded": seeded}
 
 
+_PACK_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+
+
+_BUILTIN_PACK_IDS = {"core", "cyber-mono", "capybara", "default"}
+
+
+@router.get("/api/web/packs")
+async def list_packs(
+    session: AsyncSession = Depends(get_session),
+    _identity=Depends(verify_identity_admin),
+):
+    """Список своих (не встроенных) сохранённых наборов + статус сохранения встроенных дизайн-паков."""
+    from database.web_default_seed import has_builtin_pack_file, list_custom_pack_designs, load_pack_design
+
+    custom = await list_custom_pack_designs(session, _BUILTIN_PACK_IDS)
+    builtin_saved: dict[str, bool] = {}
+    for pid in ("cyber-mono", "capybara"):
+        builtin_saved[pid] = bool(await load_pack_design(session, pid)) or has_builtin_pack_file(pid)
+    return {"custom": custom, "builtinSaved": builtin_saved}
+
+
+@router.get("/api/web/packs/{pack}/design")
+async def get_pack_design_status(
+    pack: str,
+    session: AsyncSession = Depends(get_session),
+    _identity=Depends(verify_identity_admin),
+):
+    """Сохранён ли дизайн набора (для состояния кнопки «Установить»)."""
+    if not _PACK_ID_RE.match(pack):
+        raise HTTPException(status_code=400, detail="Некорректный id набора")
+    if pack == "default":
+        return {"pack": pack, "saved": True, "builtin": True}
+    from database.web_default_seed import load_pack_design
+
+    site = await load_pack_design(session, pack)
+    return {"pack": pack, "saved": bool(site), "builtin": pack in _BUILTIN_PACK_IDS}
+
+
+@router.post("/api/web/packs")
+async def create_custom_pack(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    _identity=Depends(verify_identity_admin),
+):
+    """Создаёт новый свой набор из текущего сайта (захват) с заданным именем."""
+    from uuid import uuid4
+
+    from database.web_default_seed import capture_and_store_pack_design
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = str((body or {}).get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Укажите название набора")
+    description = str((body or {}).get("description") or "").strip()
+    pack_id = "c" + uuid4().hex[:20]
+    try:
+        await capture_and_store_pack_design(session, pack_id, name=name, description=description)
+        await session.flush()
+    except Exception as e:
+        logger.exception("[create_custom_pack] упал: %s", e)
+        raise HTTPException(status_code=500, detail=f"create_custom_pack: {type(e).__name__}: {e}")
+    await _audit_web_admin(session, _identity, "design.create_pack", entity_type="pack", entity_id=pack_id)
+    return {"ok": True, "id": pack_id, "name": name}
+
+
+@router.post("/api/web/packs/{pack}/capture")
+async def capture_pack_design(
+    pack: str,
+    session: AsyncSession = Depends(get_session),
+    _identity=Depends(verify_identity_admin),
+):
+    """Снимает текущий сайт и сохраняет как дизайн существующего набора (встроенного дизайн-пака)."""
+    if not _PACK_ID_RE.match(pack) or pack in {"default", "core"}:
+        raise HTTPException(status_code=400, detail="Нельзя сохранять для этого набора")
+    from database.web_default_seed import capture_and_store_pack_design
+
+    try:
+        site = await capture_and_store_pack_design(session, pack)
+        await session.flush()
+    except Exception as e:
+        logger.exception("[capture_pack_design] упал: %s", e)
+        raise HTTPException(status_code=500, detail=f"capture_pack_design: {type(e).__name__}: {e}")
+    await _audit_web_admin(session, _identity, "design.capture_pack", entity_type="pack", entity_id=pack)
+    pages_count = sum(1 for k, v in site.items() if not k.startswith("_") and isinstance(v, list))
+    return {"ok": True, "pack": pack, "pages": pages_count}
+
+
+@router.post("/api/web/blocks-pack/import")
+async def import_blocks_pack(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    _identity=Depends(verify_identity_admin),
+):
+    """Добавляет новые блоки в конструктор из файла набора (бандл blueprints
+    пользовательских элементов). Блоки сливаются в глобальную тему (страница landing)."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Некорректный файл набора (ожидается JSON)")
+    if isinstance(body, list):
+        blueprints = body
+    elif isinstance(body, dict):
+        blueprints = body.get("blueprints")
+    else:
+        blueprints = None
+    if not isinstance(blueprints, list) or not blueprints:
+        raise HTTPException(status_code=400, detail="Файл набора не содержит блоков (blueprints)")
+    valid = [b for b in blueprints if isinstance(b, dict) and str(b.get("slug") or "").strip() and str(b.get("runtime") or "").strip()]
+    if not valid:
+        raise HTTPException(status_code=400, detail="Некорректный формат блоков в файле набора")
+    current, _ = await _resolve_variant(session, "landing", None)
+    tokens = dict(current.theme_tokens or {})
+    existing = tokens.get("customElementBlueprints")
+    existing = existing if isinstance(existing, list) else []
+    by_slug: dict = {}
+    for b in existing:
+        if isinstance(b, dict) and b.get("slug"):
+            by_slug[str(b["slug"])] = b
+    added = 0
+    for b in valid:
+        slug = str(b["slug"])
+        if slug not in by_slug:
+            added += 1
+        by_slug[slug] = b
+    tokens["customElementBlueprints"] = list(by_slug.values())
+    cleaned_tokens, _replaced = migrate_json_data_uris(tokens)
+    current.theme_tokens = cleaned_tokens
+    await session.flush()
+    await bump_site_revision(session)
+    await _audit_web_admin(session, _identity, "blocks.import_pack", entity_type="site", entity_id="blueprints")
+    return {"ok": True, "added": added, "total": len(by_slug)}
+
+
+async def _merge_blueprints_into_landing(session: AsyncSession, blueprints: list) -> tuple[int, int]:
+    valid = [
+        b for b in blueprints
+        if isinstance(b, dict) and str(b.get("slug") or "").strip() and str(b.get("runtime") or "").strip()
+    ]
+    current, _ = await _resolve_variant(session, "landing", None)
+    tokens = dict(current.theme_tokens or {})
+    existing = tokens.get("customElementBlueprints")
+    existing = existing if isinstance(existing, list) else []
+    by_slug: dict = {}
+    for b in existing:
+        if isinstance(b, dict) and b.get("slug"):
+            by_slug[str(b["slug"])] = b
+    added = 0
+    for b in valid:
+        slug = str(b["slug"])
+        if slug not in by_slug:
+            added += 1
+        by_slug[slug] = b
+    tokens["customElementBlueprints"] = list(by_slug.values())
+    cleaned_tokens, _replaced = migrate_json_data_uris(tokens)
+    current.theme_tokens = cleaned_tokens
+    await session.flush()
+    return added, len(by_slug)
+
+
+@router.get("/api/web/packs/export-current.zip")
+async def export_current_as_pack_zip(
+    name: str = Query(default="Набор"),
+    session: AsyncSession = Depends(get_session),
+    _identity=Depends(verify_identity_admin),
+):
+    """Собирает текущий сайт в zip-набор: blocks.json (блоки) + design.json (установка дизайна) + meta.json."""
+    import io
+    import json as _json
+    import zipfile
+
+    from fastapi.responses import Response
+
+    from database.web_default_seed import capture_current_site
+
+    design = await capture_current_site(session)
+    current, _ = await _resolve_variant(session, "landing", None)
+    tokens = dict(current.theme_tokens or {})
+    blueprints = tokens.get("customElementBlueprints")
+    blueprints = blueprints if isinstance(blueprints, list) else []
+    safe_name = str(name or "Набор")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("meta.json", _json.dumps({"name": safe_name, "version": 1, "kind": "solo-pack"}, ensure_ascii=False, indent=2))
+        zf.writestr("blocks.json", _json.dumps({"blueprints": blueprints}, ensure_ascii=False, indent=2))
+        zf.writestr("design.json", _json.dumps(design, ensure_ascii=False, indent=2))
+    buf.seek(0)
+    fallback = "".join(c for c in safe_name if c.isalnum() or c in "-_") or "pack"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{fallback}.solopack.zip"'},
+    )
+
+
+@router.post("/api/web/packs/import-zip")
+async def import_pack_zip(
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+    _identity=Depends(verify_identity_admin),
+):
+    """Добавляет набор из zip-архива: blocks.json → блоки в конструктор, design.json → устанавливаемый дизайн."""
+    import io
+    import json as _json
+    import zipfile
+    from uuid import uuid4
+
+    from database.web_default_seed import store_pack_design
+
+    raw = await file.read()
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Файл не является zip-архивом набора")
+
+    names = set(zf.namelist())
+
+    def _read(cands: list[str]):
+        for n in cands:
+            if n in names:
+                try:
+                    return _json.loads(zf.read(n).decode("utf-8"))
+                except Exception:
+                    return None
+        return None
+
+    meta = _read(["meta.json", "pack.json"])
+    meta = meta if isinstance(meta, dict) else {}
+    blocks_doc = _read(["blocks.json", "blueprints.json"])
+    design = _read(["design.json", "site.json", "install.json"])
+    design = design if isinstance(design, dict) else {}
+
+    if isinstance(blocks_doc, dict):
+        blueprints = blocks_doc.get("blueprints")
+    else:
+        blueprints = blocks_doc
+    blueprints = blueprints if isinstance(blueprints, list) else []
+
+    base_name = (file.filename or "Набор").rsplit("/", 1)[-1]
+    base_name = base_name.rsplit(".", 1)[0].replace(".solopack", "")
+    name = str(meta.get("name") or base_name or "Импортированный набор").strip() or "Импортированный набор"
+    description = str(meta.get("description") or "").strip()
+
+    added_blocks = 0
+    if blueprints:
+        added_blocks, _total = await _merge_blueprints_into_landing(session, blueprints)
+
+    pack_id = ""
+    pages_count = 0
+    has_design = any(not k.startswith("_") and isinstance(v, list) for k, v in design.items())
+    if has_design:
+        pack_id = "c" + uuid4().hex[:20]
+        await store_pack_design(session, pack_id, design, meta={"name": name, "description": description, "custom": True})
+        pages_count = sum(1 for k, v in design.items() if not k.startswith("_") and isinstance(v, list))
+
+    if not blueprints and not has_design:
+        raise HTTPException(status_code=400, detail="В архиве нет ни blocks.json, ни design.json")
+
+    await session.flush()
+    await bump_site_revision(session)
+    await _audit_web_admin(session, _identity, "design.import_pack_zip", entity_type="pack", entity_id=pack_id or "blocks")
+    return {"ok": True, "id": pack_id, "name": name, "addedBlocks": added_blocks, "pages": pages_count}
+
+
+@router.post("/api/web/packs/import-file")
+async def import_pack_file(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    _identity=Depends(verify_identity_admin),
+):
+    """Импорт расшариваемого набора из файла: добавляет блоки (blueprints) в конструктор
+    и регистрирует дизайн как устанавливаемый свой набор (кнопка «Установить»)."""
+    from uuid import uuid4
+
+    from database.web_default_seed import store_pack_design
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Некорректный файл набора (ожидается JSON)")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Некорректный формат файла набора")
+    meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
+    name = str(meta.get("name") or "Импортированный набор").strip() or "Импортированный набор"
+    description = str(meta.get("description") or "").strip()
+    blueprints = body.get("blueprints") if isinstance(body.get("blueprints"), list) else []
+    design = body.get("design") if isinstance(body.get("design"), dict) else {}
+
+    added_blocks = 0
+    if blueprints:
+        added_blocks, _total = await _merge_blueprints_into_landing(session, blueprints)
+
+    pack_id = ""
+    pages_count = 0
+    has_design = any(not k.startswith("_") and isinstance(v, list) for k, v in design.items())
+    if has_design:
+        pack_id = "c" + uuid4().hex[:20]
+        await store_pack_design(session, pack_id, design, meta={"name": name, "description": description, "custom": True})
+        pages_count = sum(1 for k, v in design.items() if not k.startswith("_") and isinstance(v, list))
+
+    if not blueprints and not has_design:
+        raise HTTPException(status_code=400, detail="Файл набора пуст: нет ни блоков, ни дизайна")
+
+    await session.flush()
+    await bump_site_revision(session)
+    await _audit_web_admin(session, _identity, "design.import_pack_file", entity_type="pack", entity_id=pack_id or "blocks")
+    return {"ok": True, "id": pack_id, "name": name, "addedBlocks": added_blocks, "pages": pages_count}
+
+
+@router.delete("/api/web/packs/{pack}")
+async def delete_custom_pack(
+    pack: str,
+    session: AsyncSession = Depends(get_session),
+    _identity=Depends(verify_identity_admin),
+):
+    """Удаляет свой набор (встроенные удалять нельзя)."""
+    if not _PACK_ID_RE.match(pack) or pack in _BUILTIN_PACK_IDS:
+        raise HTTPException(status_code=400, detail="Нельзя удалить встроенный набор")
+    from database.web_default_seed import delete_pack_design
+
+    removed = await delete_pack_design(session, pack)
+    await session.flush()
+    if not removed:
+        raise HTTPException(status_code=404, detail="Набор не найден")
+    await _audit_web_admin(session, _identity, "design.delete_pack", entity_type="pack", entity_id=pack)
+    return {"ok": True, "pack": pack}
+
+
+@router.post("/api/web/packs/{pack}/install")
+async def install_pack_design_endpoint(
+    pack: str,
+    session: AsyncSession = Depends(get_session),
+    _identity=Depends(verify_identity_admin),
+):
+    """Устанавливает (восстанавливает) дизайн набора. Для «default» — встроенный seed."""
+    if not _PACK_ID_RE.match(pack):
+        raise HTTPException(status_code=400, detail="Некорректный id набора")
+    try:
+        if pack == "default":
+            from database.web_default_seed import seed_default_site
+
+            seeded = await seed_default_site(session, force=True)
+        else:
+            from database.web_default_seed import install_pack_design
+
+            seeded = await install_pack_design(session, pack)
+            if not seeded:
+                raise HTTPException(status_code=404, detail="Для этого набора ещё не сохранён дизайн")
+        await session.flush()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("[install_pack_design] упал: %s", e)
+        raise HTTPException(status_code=500, detail=f"install_pack_design: {type(e).__name__}: {e}")
+    await bump_site_revision(session)
+    await _audit_web_admin(session, _identity, "design.install_pack", entity_type="pack", entity_id=pack)
+    return {"ok": True, "pack": pack, "seeded": seeded}
+
+
 @router.get("/api/web/admin-audit")
 async def web_admin_audit(
     limit: int = Query(default=50, ge=1, le=200),
@@ -1973,17 +2334,17 @@ def _site_log_token() -> str:
         return ""
 
 
-async def _fetch_site_log_lines(max_lines: int) -> tuple[list[str], bool]:
+async def _fetch_site_log_lines(max_lines: int) -> tuple[list[str], bool, str | None]:
     from core.settings.web_config import get_site_url
 
     base = (get_site_url() or "").rstrip("/")
     token = _site_log_token()
     if not base:
         logger.warning("[logs] site-log: SITE_URL пуст (Настройки → Сайт), запрос не отправлен")
-        return [], False
+        return [], False, "SITE_URL не задан (Настройки → Сайт)."
     if not token:
         logger.warning("[logs] site-log: PLUGIN_BUILDER_TOKEN пуст (config.py / WEB_CONFIG), запрос не отправлен")
-        return [], False
+        return [], False, "PLUGIN_BUILDER_TOKEN не задан на боте (config.py / WEB_CONFIG)."
     import aiohttp
 
     url = f"{base}/api/internal/site-log?limit={max_lines}"
@@ -1997,15 +2358,26 @@ async def _fetch_site_log_lines(max_lines: int) -> tuple[list[str], bool]:
                         "[logs] site-log: {} вернул HTTP {} (токен len={}); ответ: {}",
                         url, resp.status, len(token), body,
                     )
-                    return [], False
+                    if resp.status in (401, 403):
+                        return [], False, "Токен не подошёл: PLUGIN_BUILDER_TOKEN на боте и в веб-аппе различаются (или пуст в одном из них)."
+                    return [], False, f"Веб-апп вернул HTTP {resp.status} на запрос логов сайта."
                 data = await resp.json()
         if not isinstance(data, dict):
-            return [], False
+            return [], False, "Веб-апп вернул некорректный ответ."
         lines = data.get("lines") if isinstance(data.get("lines"), list) else []
-        return [str(line) for line in lines], bool(data.get("available", True))
+        return [str(line) for line in lines], bool(data.get("available", True)), None
     except Exception as e:
         logger.warning("[logs] site-log: запрос к {} не удался: {}: {}", url, type(e).__name__, e)
-        return [], False
+        return [], False, f"Не удалось связаться с веб-аппом ({type(e).__name__}). Проверь SITE_URL."
+
+
+def _api_logging_enabled() -> bool:
+    try:
+        from config import API_LOGGING
+
+        return bool(API_LOGGING)
+    except Exception:
+        return True
 
 
 @router.get("/api/web/logs")
@@ -2016,20 +2388,23 @@ async def get_logs(
     level: str = Query("all"),
     _identity=Depends(verify_identity_admin),
 ):
+    note: str | None = None
     if source == "site":
-        raw_lines, available = await _fetch_site_log_lines(min(limit * 3, 6000))
+        raw_lines, available, note = await _fetch_site_log_lines(min(limit * 3, 6000))
     else:
         raw_lines = _tail_lines(_BOT_LOG_PATH, min(limit * 6, 6000))
         available = _BOT_LOG_PATH.exists()
     entries = [_parse_log_line(line) for line in raw_lines if line.strip()]
     if source == "api":
         entries = [e for e in entries if _is_api_log(e)]
+        if not _api_logging_enabled():
+            note = "API-логирование отключено в конфиге (API_LOGGING=False)."
     elif source == "bot":
         entries = [e for e in entries if not _is_api_log(e)]
     min_rank = {"warn": 2, "error": 3}.get(level, 0)
     if min_rank:
         entries = [e for e in entries if _LEVEL_RANK.get(e["level"], 1) >= min_rank]
-    return {"source": source, "available": available, "entries": entries[-limit:]}
+    return {"source": source, "available": available, "entries": entries[-limit:], "note": note}
 
 
 @router.get("/api/web/logs/health")
@@ -2052,7 +2427,7 @@ async def get_logs_health(_identity=Depends(verify_identity_admin)):
     out["api"] = {"available": bot_available, **_count([e for e in bot_lines if _is_api_log(e)])}
     out["bot"] = {"available": bot_available, **_count([e for e in bot_lines if not _is_api_log(e)])}
 
-    site_raw, site_available = await _fetch_site_log_lines(500)
+    site_raw, site_available, _site_note = await _fetch_site_log_lines(500)
     site_lines = [_parse_log_line(line) for line in site_raw if line.strip()]
     out["site"] = {"available": site_available, **_count(site_lines)}
     try:
@@ -2065,12 +2440,22 @@ async def get_logs_health(_identity=Depends(verify_identity_admin)):
 
 
 @router.get("/api/web/node-status")
-async def web_node_status(session: AsyncSession = Depends(get_session)):
-    """Статусы нод для блока в кабинете (скрыты выключенные вручную). Отдаёт address
-    для браузерной пробы доступности с устройства клиента."""
+async def web_node_status(request: Request, session: AsyncSession = Depends(get_session)):
+    """Статусы серверов для блока в кабинете — только серверы из тарифа юзера (его сквады
+    в Remnawave). Гостю/без подписки отдаём пусто. host:port — для браузерной пробы пинга."""
+    from api.depends import bind_identity_actor
+    from api.v2.routes.keys._common import _resolve_billing_user_id, resolve_user_squad_uuids
     from services.remnawave_monitor import get_client_node_statuses
 
-    return {"nodes": await get_client_node_statuses(session)}
+    identity = await _identity_from_cookie(session, request)
+    if identity is None:
+        return {"nodes": []}
+    await bind_identity_actor(request, session, identity)
+    billing_user_id = await _resolve_billing_user_id(request, identity, session)
+    squads = await resolve_user_squad_uuids(session, billing_user_id)
+    if not squads:
+        return {"nodes": []}
+    return {"nodes": await get_client_node_statuses(session, allowed_squad_uuids=squads)}
 
 
 @router.get("/api/web/node-status/admin")

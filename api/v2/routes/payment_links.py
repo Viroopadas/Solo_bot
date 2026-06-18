@@ -158,7 +158,7 @@ async def _store_payment_intent(
         await create_temporary_data(session, billing_user_ref, "waiting_for_addons_payment", payload)
 
 
-@router.post("/", response_model=PaymentLinkCreateResponse)
+@router.post("", response_model=PaymentLinkCreateResponse)
 async def create_link(
     body: PaymentLinkCreateRequest,
     http_request: Request,

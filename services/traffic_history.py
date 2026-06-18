@@ -63,6 +63,14 @@ async def snapshot_all_key_traffic(session: AsyncSession) -> int:
 
 async def get_traffic_history(session: AsyncSession, client_id: str, days: int = 30) -> list[dict]:
     since = _dt.datetime.utcnow().date() - _dt.timedelta(days=max(1, min(365, days)))
+    baseline = (
+        await session.execute(
+            select(KeyTrafficHistory.used_gb)
+            .where(KeyTrafficHistory.client_id == client_id, KeyTrafficHistory.snapshot_date < since)
+            .order_by(KeyTrafficHistory.snapshot_date.desc())
+            .limit(1)
+        )
+    ).scalar()
     rows = (
         await session.execute(
             select(KeyTrafficHistory.snapshot_date, KeyTrafficHistory.used_gb, KeyTrafficHistory.limit_gb)
@@ -70,10 +78,15 @@ async def get_traffic_history(session: AsyncSession, client_id: str, days: int =
             .order_by(KeyTrafficHistory.snapshot_date.asc())
         )
     ).all()
-    return [
-        {"date": d.isoformat(), "used_gb": float(u) if u is not None else None, "limit_gb": float(lim) if lim is not None else None}
-        for (d, u, lim) in rows
-    ]
+    out: list[dict] = []
+    prev = float(baseline) if baseline is not None else None
+    for (d, u, lim) in rows:
+        cur = float(u) if u is not None else None
+        delta = None if cur is None else (0.0 if prev is None else round(max(0.0, cur - prev), 3))
+        if cur is not None:
+            prev = cur
+        out.append({"date": d.isoformat(), "used_gb": delta, "limit_gb": float(lim) if lim is not None else None})
+    return out
 
 
 async def snapshot_all_key_traffic_hourly(session: AsyncSession) -> int:
@@ -129,6 +142,14 @@ async def snapshot_all_key_traffic_hourly(session: AsyncSession) -> int:
 
 async def get_traffic_history_hourly(session: AsyncSession, client_id: str, hours: int = 24) -> list[dict]:
     since = _dt.datetime.utcnow() - _dt.timedelta(hours=max(1, min(168, hours)))
+    baseline = (
+        await session.execute(
+            select(KeyTrafficHourly.used_gb)
+            .where(KeyTrafficHourly.client_id == client_id, KeyTrafficHourly.snapshot_hour < since)
+            .order_by(KeyTrafficHourly.snapshot_hour.desc())
+            .limit(1)
+        )
+    ).scalar()
     rows = (
         await session.execute(
             select(KeyTrafficHourly.snapshot_hour, KeyTrafficHourly.used_gb)
@@ -136,7 +157,12 @@ async def get_traffic_history_hourly(session: AsyncSession, client_id: str, hour
             .order_by(KeyTrafficHourly.snapshot_hour.asc())
         )
     ).all()
-    return [
-        {"date": h.isoformat(), "used_gb": float(u) if u is not None else None, "limit_gb": None}
-        for (h, u) in rows
-    ]
+    out: list[dict] = []
+    prev = float(baseline) if baseline is not None else None
+    for (h, u) in rows:
+        cur = float(u) if u is not None else None
+        delta = None if cur is None else (0.0 if prev is None else round(max(0.0, cur - prev), 3))
+        if cur is not None:
+            prev = cur
+        out.append({"date": h.isoformat(), "used_gb": delta, "limit_gb": None})
+    return out

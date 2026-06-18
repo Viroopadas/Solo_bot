@@ -156,6 +156,16 @@ def _filter(record):
     return True
 
 
+def _file_filter(record):
+    # API-строки доступа пишем в файл всегда, независимо от LOGGING_LEVEL —
+    # чтобы вкладка «Апи» в админке работала при любом уровне (debug/info/warning/...).
+    if "[API]" not in record["message"]:
+        level_no = getattr(record.get("level"), "no", 20)
+        if level_no < BASE_LEVEL:
+            return False
+    return _filter(record)
+
+
 logger.add(
     sys.stderr,
     level=BASE_LEVEL,
@@ -167,11 +177,11 @@ logger.add(
 log_file_path = os.path.join(log_folder, "logging.log")
 logger.add(
     log_file_path,
-    level=BASE_LEVEL,
+    level=0,
     format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {module}:{function}:{line} | {extra[module_tag]} {message}",
     rotation=LOG_ROTATION_TIME,
     retention=timedelta(days=3),
-    filter=_filter,
+    filter=_file_filter,
 )
 
 logger = logger

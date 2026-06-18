@@ -79,6 +79,7 @@ MODES_TITLES: Final[dict[str, str]] = {
     "TRIAL_TIME_DISABLED": "Отключить триал",
     "SUPPORT_TRIAGE_ENABLED": "Опросник поддержки",
     "PROTECT_CONTENT_ENABLED": "Защита контента",
+    "TARIFF_OPTIONS_PAGINATION": "Слайдер опций",
 }
 
 MONEY_FIELDS: Final[dict[str, str]] = {

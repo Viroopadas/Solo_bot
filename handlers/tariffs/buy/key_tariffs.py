@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import USE_NEW_PAYMENT_FLOW
+from core.bootstrap import MODES_CONFIG
 from core.settings.tariffs_config import normalize_tariff_config
 from database import get_balance, get_tariff_by_id
 from database.notifications import check_hot_lead_discount
@@ -526,10 +527,39 @@ async def render_user_config_screen(
             InlineKeyboardButton(text=right, callback_data=f"{prefix}|{tariff_id}|{next_val}"),
         ]
 
-    if has_device_choice:
-        builder.row(*_stepper_row(device_int_options, selected_devices, "cfg_user_devices", _dev_label))
-    if has_traffic_choice:
-        builder.row(*_stepper_row(traffic_int_options, selected_traffic_gb, "cfg_user_traffic", _traf_label))
+    def _option_buttons(options: list[int], selected, prefix: str, label_fn) -> list[InlineKeyboardButton]:
+        sel = int(selected) if selected is not None else None
+        return [
+            InlineKeyboardButton(
+                text=label_fn(v) + (" ✅" if sel is not None and v == sel else ""),
+                callback_data=f"{prefix}|{tariff_id}|{v}",
+            )
+            for v in options
+        ]
+
+    use_pagination = bool((MODES_CONFIG or {}).get("TARIFF_OPTIONS_PAGINATION", True))
+    if use_pagination:
+        if has_device_choice:
+            builder.row(*_stepper_row(device_int_options, selected_devices, "cfg_user_devices", _dev_label))
+        if has_traffic_choice:
+            builder.row(*_stepper_row(traffic_int_options, selected_traffic_gb, "cfg_user_traffic", _traf_label))
+    else:
+        device_buttons = _option_buttons(device_int_options, selected_devices, "cfg_user_devices", _dev_label) if has_device_choice else []
+        traffic_buttons = _option_buttons(traffic_int_options, selected_traffic_gb, "cfg_user_traffic", _traf_label) if has_traffic_choice else []
+        if device_buttons and traffic_buttons:
+            for i in range(max(len(device_buttons), len(traffic_buttons))):
+                row = []
+                if i < len(device_buttons):
+                    row.append(device_buttons[i])
+                if i < len(traffic_buttons):
+                    row.append(traffic_buttons[i])
+                builder.row(*row)
+        elif device_buttons:
+            for i in range(0, len(device_buttons), 2):
+                builder.row(*device_buttons[i : i + 2])
+        elif traffic_buttons:
+            for i in range(0, len(traffic_buttons), 2):
+                builder.row(*traffic_buttons[i : i + 2])
 
     is_renew_mode = data.get("renew_mode") == "renew"
     confirm_prefix = "cfg_renew_confirm" if is_renew_mode else "cfg_user_confirm"

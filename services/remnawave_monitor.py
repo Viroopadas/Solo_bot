@@ -22,7 +22,7 @@ HOST_ROTATION_DEFAULT_INTERVAL_MIN = 60
 TICK_SLEEP_SEC = 30
 
 
-async def get_client_node_statuses(session) -> list[dict]:
+async def get_client_node_statuses(session, allowed_squad_uuids: set[str] | None = None) -> list[dict]:
     """Реальные точки подключения клиента для показа в кабинете.
 
     Источник — хосты Remnawave (host.address:host.port), из которых собирается
@@ -31,12 +31,28 @@ async def get_client_node_statuses(session) -> list[dict]:
     чтобы публичный запрос не дёргал панель.
 
     Скрыты выключенные вручную (host.isDisabled в панели и servers.enabled=false в боте).
-    Возвращает [{uuid, online, name, load, host, port}] — host:port нужны для браузерной
-    пробы реальной доступности с устройства клиента.
+    Если задан allowed_squad_uuids — оставляем только хосты, чей inbound входит в эти сквады
+    (т.е. серверы из тарифа конкретного юзера). None — без фильтра по сквадам (для админа).
     """
     targets = list(REMNAWAVE_CONFIG.get("CLIENT_CONNECTION_TARGETS") or [])
     if not targets:
         return []
+
+    allowed_inbounds: set[str] | None = None
+    if allowed_squad_uuids is not None:
+        squad_inbounds = dict(REMNAWAVE_CONFIG.get("SQUAD_INBOUNDS") or {})
+        allowed_inbounds = set()
+        for squad in allowed_squad_uuids:
+            for ib in squad_inbounds.get(str(squad)) or []:
+                allowed_inbounds.add(str(ib))
+        target_inbounds = {str(t.get("inbound_uuid") or "") for t in targets}
+        logger.info(
+            "[NodeStatus] squads={} squad_map={} allowed_inbounds={} target_inbounds={}",
+            sorted(str(s) for s in allowed_squad_uuids),
+            len(squad_inbounds),
+            sorted(allowed_inbounds),
+            sorted(i for i in target_inbounds if i),
+        )
 
     servers = await get_servers(session, include_enabled=True)
     enabled_by_api: dict[str, bool] = {}
@@ -50,6 +66,8 @@ async def get_client_node_statuses(session) -> list[dict]:
     for tgt in targets:
         api_url = str(tgt.get("api_url") or "")
         if enabled_by_api.get(api_url.rstrip("/"), True) is False:
+            continue
+        if allowed_inbounds is not None and str(tgt.get("inbound_uuid") or "") not in allowed_inbounds:
             continue
         out.append({
             "uuid": str(tgt.get("uuid") or ""),
@@ -140,6 +158,7 @@ async def _node_health_tick(bot) -> None:
     last_states: dict[str, dict[str, Any]] = dict(REMNAWAVE_CONFIG.get("NODE_HEALTH_LAST_STATES") or {})
     next_states: dict[str, dict[str, Any]] = {}
     next_targets: list[dict[str, Any]] = []
+    next_squad_inbounds: dict[str, list[str]] = {}
     alerts: list[tuple[str, dict[str, Any], bool]] = []
 
     for api_url in panels:
@@ -147,14 +166,21 @@ async def _node_health_tick(bot) -> None:
         if api is None:
             continue
         hosts_raw: Any = []
+        squads_raw: list[dict] = []
         try:
             nodes = await api.get_all_nodes() or []
             hosts_raw = await api.get_hosts() or []
+            squads_raw = await api.get_internal_squads() or []
         finally:
             try:
                 await api.aclose()
             except Exception:
                 pass
+
+        for sq in squads_raw:
+            uuid = str(sq.get("uuid") or "")
+            if uuid:
+                next_squad_inbounds[uuid] = [str(i) for i in (sq.get("inbounds") or []) if i]
 
         try:
             hosts = _normalize_hosts(hosts_raw)
@@ -203,6 +229,9 @@ async def _node_health_tick(bot) -> None:
     if next_targets and next_targets != list(REMNAWAVE_CONFIG.get("CLIENT_CONNECTION_TARGETS") or []):
         new_cfg = new_cfg if new_cfg is not None else dict(REMNAWAVE_CONFIG)
         new_cfg["CLIENT_CONNECTION_TARGETS"] = next_targets
+    if next_squad_inbounds and next_squad_inbounds != dict(REMNAWAVE_CONFIG.get("SQUAD_INBOUNDS") or {}):
+        new_cfg = new_cfg if new_cfg is not None else dict(REMNAWAVE_CONFIG)
+        new_cfg["SQUAD_INBOUNDS"] = next_squad_inbounds
     if new_cfg is not None:
         async with async_session_maker() as session:
             await update_remnawave_config(session, new_cfg)
@@ -283,6 +312,7 @@ def _build_connection_targets(
             "position": position,
             "online": online,
             "load": int(load.get(ib_uuid, 0)) if ib_uuid else 0,
+            "inbound_uuid": ib_uuid,
         })
     logger.info(
         "[Remnawave-Monitor] {}: hosts={} nodes={} alive_inbounds={} any_alive={} online={}",
