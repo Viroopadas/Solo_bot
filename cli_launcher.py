@@ -250,6 +250,7 @@ PROJECT_DIR = os.path.abspath(os.path.dirname(__file__))
 IS_ROOT_DIR = PROJECT_DIR == "/root"
 GITHUB_REPO = "https://github.com/Vladless/Solo_bot"
 CONFIG_BUILDER_URL = "https://pocomacho.ru/solonetbot/dashboard"
+WIKI_URL = "https://wikibot.solobot.ru"
 GHCR_IMAGE = os.environ.get("GHCR_IMAGE", "vladless/solo-brick").strip() or "vladless/solo-brick"
 DEFAULT_SERVICE_NAME = "bot.service"
 VENV_PYTHON = os.path.join(PROJECT_DIR, "venv", "bin", "python")
@@ -533,6 +534,8 @@ def install_core_packages_if_needed():
         missing_packages.append("git")
     if shutil.which("rsync") is None:
         missing_packages.append("rsync")
+    if shutil.which("curl") is None:
+        missing_packages.append("curl")
 
     python312_path = shutil.which("python3.12")
     if python312_path is None:
@@ -654,13 +657,155 @@ def is_runtime_ready() -> bool:
     return os.path.exists(VENV_PYTHON) and is_service_exists(SERVICE_NAME)
 
 
+def _read_config_str(key: str) -> str:
+    try:
+        text = open(os.path.join(PROJECT_DIR, "config.py"), encoding="utf-8").read()
+    except Exception:
+        return ""
+    m = re.search(rf'^{key}\s*=\s*[\'"]([^\'"]*)[\'"]', text, re.M)
+    return m.group(1) if m else ""
+
+
+def _write_config_value(key: str, value: str) -> bool:
+    path = os.path.join(PROJECT_DIR, "config.py")
+    try:
+        text = open(path, encoding="utf-8").read()
+    except Exception as e:
+        console.print(f"[yellow]Не удалось открыть config.py: {e}[/yellow]")
+        return False
+    line = f'{key} = "{value}"'
+    text, n = re.subn(rf'(?m)^{key}\s*=.*$', line, text)
+    if n == 0:
+        text = text.rstrip() + f"\n{line}\n"
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return True
+    except Exception as e:
+        console.print(f"[yellow]Не удалось записать config.py: {e}[/yellow]")
+        return False
+
+
+def _prompt_domain() -> str:
+    cur = _read_config_str("WEBHOOK_HOST")
+    console.print(
+        "[dim]Домен, на котором работает бот (A-запись домена должна указывать на IP этого сервера). "
+        "Обязателен: по нему Telegram доставляет сообщения и клиенты получают ссылки подписок.[/dim]"
+    )
+    raw = (safe_prompt("[cyan]Домен бота[/cyan] (например vpn.example.com)", default=cur) or "").strip()
+    raw = raw.replace("https://", "").replace("http://", "").strip("/ ")
+    if not raw:
+        return ""
+    host = f"https://{raw}"
+    if _write_config_value("WEBHOOK_HOST", host):
+        console.print(f"[green]Домен сохранён в config.py: {host}[/green]")
+    return host
+
+
+def _read_config_db_creds() -> dict:
+    creds = {"user": "myuser", "password": "", "name": "solobot"}
+    try:
+        text = open(os.path.join(PROJECT_DIR, "config.py"), encoding="utf-8").read()
+    except Exception:
+        return creds
+    for key, field in (("DB_USER", "user"), ("DB_PASSWORD", "password"), ("DB_NAME", "name")):
+        m = re.search(rf'^{key}\s*=\s*[\'"]([^\'"]*)[\'"]', text, re.M)
+        if m:
+            creds[field] = m.group(1)
+    return creds
+
+
+def _write_config_db_creds(creds: dict) -> bool:
+    path = os.path.join(PROJECT_DIR, "config.py")
+    try:
+        text = open(path, encoding="utf-8").read()
+    except Exception as e:
+        console.print(f"[yellow]Не удалось открыть config.py: {e}[/yellow]")
+        return False
+    for key, field in (("DB_NAME", "name"), ("DB_USER", "user"), ("DB_PASSWORD", "password")):
+        line = f'{key} = "{creds[field]}"'
+        text, n = re.subn(rf'(?m)^{key}\s*=.*$', line, text)
+        if n == 0:
+            text = text.rstrip() + f"\n{line}\n"
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return True
+    except Exception as e:
+        console.print(f"[yellow]Не удалось записать config.py: {e}[/yellow]")
+        return False
+
+
+def _prompt_db_creds() -> dict:
+    cur = _read_config_db_creds()
+    if not cur["password"]:
+        cur["password"] = secrets.token_urlsafe(18)
+        console.print("[dim]Пароль БД сгенерирован автоматически — оставьте его (Enter) или задайте свой.[/dim]")
+    console.print("[dim]Доступ к базе данных. Нажмите Enter, чтобы оставить предложенное значение.[/dim]")
+    name = (safe_prompt("[cyan]Имя базы данных[/cyan]", default=cur["name"]) or cur["name"]).strip()
+    user = (safe_prompt("[cyan]Пользователь БД[/cyan]", default=cur["user"]) or cur["user"]).strip()
+    password = (safe_prompt("[cyan]Пароль БД[/cyan]", default=cur["password"]) or cur["password"]).strip()
+    creds = {"name": name, "user": user, "password": password}
+    if _write_config_db_creds(creds):
+        console.print("[green]Доступ к БД сохранён в config.py.[/green]")
+    return creds
+
+
+def _ensure_data_services(creds: dict) -> bool:
+    compose_file = os.path.join(PROJECT_DIR, "docker-compose.local.yml")
+    if not os.path.exists(compose_file):
+        console.print("[yellow]Файл docker-compose.local.yml не найден — данные не поднять автоматически.[/yellow]")
+        return False
+    if not _ensure_docker():
+        return False
+    for port, svc in ((5432, "PostgreSQL"), (6379, "Redis")):
+        owner = _port_owner(port)
+        if owner and "docker" not in owner.lower():
+            console.print(
+                f"[yellow]Порт {port} уже занят процессом «{owner}» (не Docker) — это помешает поднять {svc}.[/yellow]"
+            )
+            console.print(
+                f"[dim]Обычно это системный {svc}. Остановите его (например: sudo systemctl stop postgresql) "
+                f"или освободите порт {port}, затем повторите.[/dim]"
+            )
+            if not safe_confirm("[cyan]Попробовать поднять контейнеры всё равно?[/cyan]", default=False):
+                return False
+    env = {
+        **os.environ,
+        "POSTGRES_USER": creds["user"],
+        "POSTGRES_PASSWORD": creds["password"],
+        "POSTGRES_DB": creds["name"],
+    }
+    base = ["docker", "compose", "-f", compose_file, "up", "-d"]
+    with console.status("[bold yellow]Запуск PostgreSQL и Redis…[/bold yellow]"):
+        res = subprocess.run(base + ["--wait"], capture_output=True, text=True, env=env)
+        if res.returncode != 0:
+            res = subprocess.run(base, capture_output=True, text=True, env=env)
+    if res.returncode != 0:
+        console.print(f"[red]{(res.stderr or '').strip()[:500]}[/red]")
+        return False
+    for _ in range(30):
+        chk = subprocess.run(
+            ["docker", "exec", "solobot-postgres", "pg_isready", "-U", creds["user"], "-d", creds["name"]],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if chk.returncode == 0:
+            return True
+        sleep(2)
+    console.print("[yellow]PostgreSQL запущен, но не ответил готовностью за отведённое время.[/yellow]")
+    return False
+
+
 def install_bot():
     console.print(
         Panel(
-            "[white]CLI подготовит окружение, установит зависимости, создаст systemd-службу "
-            "и инициализирует базу данных. Если проекта ещё нет рядом, CLI сначала скачает его автоматически.[/white]\n\n"
+            "[white]CLI подготовит окружение, поднимет базу данных и Redis, установит зависимости, "
+            "создаст systemd-службу и инициализирует базу. Если проекта ещё нет рядом, CLI сначала скачает его автоматически.[/white]\n\n"
             "[yellow]Понадобятся два файла с сайта:[/yellow] [bold]config.py[/bold] и [bold]texts.py[/bold] "
-            "(токен, доступ к БД, тексты). Если их ещё нет — CLI остановится и подскажет, куда их положить.",
+            "(токен, доступ к БД, тексты). Если их ещё нет — CLI остановится и подскажет, куда их положить.\n\n"
+            "[bold red]Важно:[/bold red] боту обязательно нужен [bold]домен с HTTPS[/bold]. Без него Telegram не доставляет "
+            "сообщения и не работают ссылки подписок. Домен указывается на сайте при генерации config.py.",
             border_style="green",
             title="[bold green]Автоматическая установка SoloBot[/bold green]",
             padding=(1, 2),
@@ -670,15 +815,11 @@ def install_bot():
     if not safe_confirm("[bold green]Запустить автоматическую установку?[/bold green]", default=True):
         return
 
-    total = 7
+    total = 8
     try:
         step_rule(1, total, "Файлы проекта")
-        console.print("[dim]Проверяю исходники бота рядом с лаунчером. Если их нет — скачаю с GitHub.[/dim]")
-        branch = "main"
-        if not has_project_code():
-            use_beta = safe_confirm("[yellow]Скачать beta/dev ветку вместо стабильной?[/yellow]", default=False)
-            branch = "dev" if use_beta else "main"
-        if not bootstrap_project_files(branch=branch):
+        console.print("[dim]Проверяю исходники бота рядом с лаунчером. Если их нет — скачаю стабильную версию с GitHub.[/dim]")
+        if not bootstrap_project_files(branch="main"):
             step_fail("Не удалось подготовить файлы проекта. Установка прервана.")
             return
         refresh_service_name()
@@ -691,33 +832,63 @@ def install_bot():
         )
         config_path = os.path.join(PROJECT_DIR, "config.py")
         texts_path = os.path.join(PROJECT_DIR, "handlers", "texts.py")
-        missing_files = []
-        if not os.path.exists(config_path):
-            missing_files.append("config.py")
-        if not os.path.exists(texts_path):
-            missing_files.append("handlers/texts.py")
-        if missing_files:
-            step_fail("Не хватает обязательных файлов: " + ", ".join(missing_files))
+
+        def _missing_cfg():
+            miss = []
+            if not os.path.exists(config_path):
+                miss.append("config.py")
+            if not os.path.exists(texts_path):
+                miss.append("handlers/texts.py")
+            return miss
+
+        while _missing_cfg():
+            step_warn("Пока нет файлов: " + ", ".join(_missing_cfg()))
             console.print(
                 Panel(
-                    "[white]Перед установкой нужно положить рядом с ботом два файла, "
-                    "которые вы скачиваете на сайте:[/white]\n\n"
+                    "[white]Положите рядом с ботом два файла, которые вы скачиваете на сайте:[/white]\n\n"
                     f"  • [cyan]config.py[/cyan] кладётся сюда:\n    [bold]{config_path}[/bold]\n"
                     f"  • [cyan]texts.py[/cyan] кладётся сюда:\n    [bold]{texts_path}[/bold]\n\n"
-                    f"[white]Где взять файлы:[/white] [bold]{CONFIG_BUILDER_URL}[/bold]\n\n"
-                    "[white]Что сделать по шагам:[/white]\n"
-                    "  1. Откройте сайт и получите свои config.py и texts.py под ваш бот.\n"
-                    "  2. Загрузите оба файла на сервер по путям, указанным выше\n"
-                    "     (через SFTP/FileZilla или командой scp с компьютера).\n"
-                    "  3. Запустите установку снова: [bold]sudo solobot[/bold]\n\n"
-                    "[dim]В этих файлах ваши токены и пароли. Никому не пересылайте и не публикуйте их.[/dim]",
+                    f"[white]Где взять файлы:[/white] [bold]{CONFIG_BUILDER_URL}[/bold]\n"
+                    "[yellow]Это шаблоны с пустыми значениями — заполните config.py "
+                    f"(токен бота и др.) по инструкции на вики:[/yellow] [bold]{WIKI_URL}[/bold]\n\n"
+                    "[white]Как загрузить (команды с вашего компьютера):[/white]\n"
+                    f"  • [bold]scp config.py root@ВАШ_IP:{config_path}[/bold]\n"
+                    f"  • [bold]scp texts.py root@ВАШ_IP:{texts_path}[/bold]\n"
+                    "  • либо перетащите файлы в FileZilla/SFTP по этим путям.\n\n"
+                    "[dim]В этих файлах ваши токены и пароли — никому не пересылайте их.[/dim]",
                     border_style="yellow",
                     title="[bold yellow]Нужны config.py и texts.py[/bold yellow]",
                     padding=(1, 2),
                 )
             )
-            return
+            if not safe_confirm("[green]Загрузили файлы? Проверить снова?[/green]", default=True):
+                step_warn("Установка приостановлена. Запустите снова, когда загрузите файлы: sudo solobot")
+                return
         step_ok("config.py и texts.py на месте.")
+
+        console.print(
+            f"[yellow]Напоминание:[/yellow] config.py — это шаблон с пустыми значениями. "
+            f"Заполните его по инструкции на вики ([bold]{WIKI_URL}[/bold]) — обязателен токен бота, иначе бот не запустится."
+        )
+        domain = _prompt_domain()
+        if not domain:
+            console.print(
+                Panel(
+                    "[white]Боту обязательно нужен домен с HTTPS:[/white] по нему Telegram доставляет сообщения, "
+                    "и по этому же адресу клиенты получают ссылки подписок.\n\n"
+                    "[white]Что нужно:[/white]\n"
+                    "  1. Купите домен и направьте его A-записью на IP этого сервера.\n"
+                    "  2. Запустите установку снова и введите домен (или впишите в config.py "
+                    "WEBHOOK_HOST = \"https://ваш-домен\").\n\n"
+                    "[dim]Без домена бот не будет отвечать в Telegram.[/dim]",
+                    border_style="red",
+                    title="[bold red]Домен не указан[/bold red]",
+                    padding=(1, 2),
+                )
+            )
+            if not safe_confirm("[yellow]Продолжить установку без домена?[/yellow]", default=False):
+                step_warn("Установка остановлена. Подготовьте домен и запустите снова: sudo solobot")
+                return
 
         step_rule(3, total, "Системные пакеты")
         console.print("[dim]git, rsync, Python 3.12 и модуль venv — это база, без которой бот не запустится.[/dim]")
@@ -732,7 +903,21 @@ def install_bot():
             return
         step_ok("Зависимости установлены.")
 
-        step_rule(5, total, "База данных")
+        step_rule(5, total, "Данные (PostgreSQL и Redis)")
+        console.print(
+            "[dim]Зададим доступ к базе данных (Enter — значения по умолчанию). Эти значения пропишутся "
+            "в config.py и в контейнер PostgreSQL, чтобы бот и база точно совпали. Затем подниму PostgreSQL и Redis.[/dim]"
+        )
+        db_creds = _prompt_db_creds()
+        if _ensure_data_services(db_creds):
+            step_ok("PostgreSQL и Redis запущены.")
+        else:
+            step_warn(
+                "Не удалось поднять данные автоматически. Подними вручную: "
+                "docker compose -f docker-compose.local.yml up -d"
+            )
+
+        step_rule(6, total, "База данных")
         console.print(
             "[dim]Создаю таблицы по доступам из config.py. "
             "Если данные базы в config.py неверные — шаг можно завершить позже, перезапустив бота из меню.[/dim]"
@@ -741,16 +926,20 @@ def install_bot():
         if db_ready:
             step_ok("База данных инициализирована.")
         else:
-            step_warn("База не готова: проверьте доступ к БД в config.py, затем перезапустите бота из меню.")
+            step_warn("База не готова: бот не смог подключиться по доступам из config.py.")
+            console.print(
+                "[dim]Если база уже создавалась раньше с другими логином/паролем, контейнер хранит старые доступы. "
+                "Пересоздать БД (СОТРЁТ данные): docker compose -f docker-compose.local.yml down -v, затем переустановите.[/dim]"
+            )
 
-        step_rule(6, total, "Служба автозапуска")
+        step_rule(7, total, "Служба автозапуска")
         console.print("[dim]Создаю systemd-службу, чтобы бот стартовал сам и поднимался после перезагрузки сервера.[/dim]")
         if not ensure_systemd_service():
             step_fail("Не удалось настроить службу. Установка прервана.")
             return
         step_ok(f"Служба {SERVICE_NAME} настроена.")
 
-        step_rule(7, total, "Права и запуск")
+        step_rule(8, total, "Права и запуск")
         console.print("[dim]Назначаю владельца и права на файлы проекта, закрываю секреты (config.py, тексты) и запускаю бота.[/dim]")
         fix_permissions()
         enable_and_start_service(start_now=db_ready)
@@ -759,13 +948,19 @@ def install_bot():
         console.print()
         if db_ready:
             console.print("[bold green]✅ Установка SoloBot завершена. Бот запущен.[/bold green]")
+            console.print(
+                "[dim]Проверка: в меню пункт 6 (статус) и 5 (логи). Откройте бота в Telegram и нажмите /start. "
+                "Если бот не отвечает — проверьте токен в config.py, затем перезапустите (пункт 3).[/dim]"
+            )
         else:
             console.print(
                 "[bold yellow]✅ Установка почти готова.[/bold yellow] "
-                "[yellow]Заполните config.py (токен и доступ к БД) и запустите бота из меню (перезапуск службы).[/yellow]"
+                "[yellow]Осталась база: проверьте доступ к БД в config.py и перезапустите бота (пункт 3 в меню).[/yellow]"
             )
     except subprocess.CalledProcessError as e:
         step_fail(f"Ошибка во время установки: {e}")
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Установка прервана пользователем.[/yellow]")
 
 
 def prompt_install_if_needed():
@@ -1311,20 +1506,38 @@ def get_remote_version(branch="main"):
 
 def _adopt_beta_config_files() -> list[str]:
     renamed = []
-    pairs = [
-        (os.path.join(PROJECT_DIR, "config_beta.py"), os.path.join(PROJECT_DIR, "config.py")),
-        (os.path.join(PROJECT_DIR, "handlers", "texts_beta.py"), os.path.join(PROJECT_DIR, "handlers", "texts.py")),
-        (os.path.join(PROJECT_DIR, "texts_beta.py"), os.path.join(PROJECT_DIR, "handlers", "texts.py")),
+    parent = os.path.dirname(PROJECT_DIR)
+    targets = [
+        (
+            [
+                os.path.join(PROJECT_DIR, "config_beta.py"),
+                os.path.join(parent, "config_beta.py"),
+            ],
+            os.path.join(PROJECT_DIR, "config.py"),
+        ),
+        (
+            [
+                os.path.join(PROJECT_DIR, "handlers", "texts_beta.py"),
+                os.path.join(PROJECT_DIR, "texts_beta.py"),
+                os.path.join(parent, "texts_beta.py"),
+            ],
+            os.path.join(PROJECT_DIR, "handlers", "texts.py"),
+        ),
     ]
-    for src, dst in pairs:
-        if not os.path.exists(src):
-            continue
-        try:
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            os.replace(src, dst)
-            renamed.append(f"{os.path.basename(src)} → {os.path.relpath(dst, PROJECT_DIR)}")
-        except Exception as e:
-            console.print(f"[yellow]Не удалось переименовать {os.path.basename(src)}: {e}[/yellow]")
+    for sources, dst in targets:
+        for src in sources:
+            if not os.path.exists(src):
+                continue
+            try:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                try:
+                    os.replace(src, dst)
+                except OSError:
+                    shutil.move(src, dst)
+                renamed.append(f"{os.path.basename(src)} → {os.path.relpath(dst, PROJECT_DIR)}")
+            except Exception as e:
+                console.print(f"[yellow]Не удалось переименовать {os.path.basename(src)}: {e}[/yellow]")
+            break
     return renamed
 
 
