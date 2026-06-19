@@ -193,7 +193,8 @@ async def auth_summary(
     billing_user_id = actor.billing_user_id if actor and actor.billing_user_id is not None else None
     if billing_user_id is None:
         try:
-            billing_user_id = await idb.ensure_billing_user_for_identity(session, identity)
+            async with session.begin_nested():
+                billing_user_id = await idb.ensure_billing_user_for_identity(session, identity)
         except Exception as exc:
             logger.warning("[auth_summary] billing_user_id не определён: {}", exc)
             billing_user_id = None
