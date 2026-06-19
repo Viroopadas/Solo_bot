@@ -1255,15 +1255,18 @@ def fix_permissions():
         user = os.environ.get("SUDO_USER") or subprocess.check_output(["whoami"], text=True).strip()
         console.log(f"[cyan]Используем пользователь: {user}[/cyan]")
 
+        skip_dirs = {"venv", ".venv", ".git", "node_modules"}
         for root, dirs, files in os.walk(PROJECT_DIR):
-            for dir in dirs:
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            for dir in list(dirs):
                 if dir == "__pycache__":
                     pycache_path = os.path.join(root, dir)
-                    subprocess.run(["sudo", "rm", "-rf", pycache_path], check=True)
+                    subprocess.run(["sudo", "rm", "-rf", pycache_path], check=False)
+                    dirs.remove(dir)
             for file in files:
                 if file.endswith(".pyc"):
                     pyc_path = os.path.join(root, file)
-                    subprocess.run(["sudo", "rm", "-f", pyc_path], check=True)
+                    subprocess.run(["sudo", "rm", "-f", pyc_path], check=False)
 
         console.log("[blue]Изменение владельца на весь проект...[/blue]")
         subprocess.run(["sudo", "chown", "-R", f"{user}:{user}", PROJECT_DIR], check=True)
