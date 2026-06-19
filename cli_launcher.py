@@ -249,6 +249,7 @@ TEMP_DIR = os.path.expanduser("~/.solobot_tmp")
 PROJECT_DIR = os.path.abspath(os.path.dirname(__file__))
 IS_ROOT_DIR = PROJECT_DIR == "/root"
 GITHUB_REPO = "https://github.com/Vladless/Solo_bot"
+CONFIG_BUILDER_URL = "https://pocomacho.ru/solonetbot/dashboard"
 GHCR_IMAGE = os.environ.get("GHCR_IMAGE", "vladless/solo-brick").strip() or "vladless/solo-brick"
 DEFAULT_SERVICE_NAME = "bot.service"
 VENV_PYTHON = os.path.join(PROJECT_DIR, "venv", "bin", "python")
@@ -657,7 +658,9 @@ def install_bot():
     console.print(
         Panel(
             "[white]CLI подготовит окружение, установит зависимости, создаст systemd-службу "
-            "и попробует инициализировать базу данных. Если проекта ещё нет рядом, CLI сначала скачает его автоматически.[/white]",
+            "и инициализирует базу данных. Если проекта ещё нет рядом, CLI сначала скачает его автоматически.[/white]\n\n"
+            "[yellow]Понадобятся два файла с сайта:[/yellow] [bold]config.py[/bold] и [bold]texts.py[/bold] "
+            "(токен, доступ к БД, тексты). Если их ещё нет — CLI остановится и подскажет, куда их положить.",
             border_style="green",
             title="[bold green]Автоматическая установка SoloBot[/bold green]",
             padding=(1, 2),
@@ -667,24 +670,102 @@ def install_bot():
     if not safe_confirm("[bold green]Запустить автоматическую установку?[/bold green]", default=True):
         return
 
+    total = 7
     try:
+        step_rule(1, total, "Файлы проекта")
+        console.print("[dim]Проверяю исходники бота рядом с лаунчером. Если их нет — скачаю с GitHub.[/dim]")
         branch = "main"
         if not has_project_code():
             use_beta = safe_confirm("[yellow]Скачать beta/dev ветку вместо стабильной?[/yellow]", default=False)
             branch = "dev" if use_beta else "main"
         if not bootstrap_project_files(branch=branch):
+            step_fail("Не удалось подготовить файлы проекта. Установка прервана.")
             return
         refresh_service_name()
-        install_core_packages_if_needed()
-        install_dependencies()
-        db_ready = initialize_database()
-        if not ensure_systemd_service():
+        step_ok("Файлы проекта на месте.")
+
+        step_rule(2, total, "Конфигурация")
+        console.print(
+            "[dim]config.py и texts.py вы получаете на сайте (там задаются токен бота, доступ к базе данных, тексты). "
+            "В исходниках их нет, поэтому без этих двух файлов установка не продолжится.[/dim]"
+        )
+        config_path = os.path.join(PROJECT_DIR, "config.py")
+        texts_path = os.path.join(PROJECT_DIR, "handlers", "texts.py")
+        missing_files = []
+        if not os.path.exists(config_path):
+            missing_files.append("config.py")
+        if not os.path.exists(texts_path):
+            missing_files.append("handlers/texts.py")
+        if missing_files:
+            step_fail("Не хватает обязательных файлов: " + ", ".join(missing_files))
+            console.print(
+                Panel(
+                    "[white]Перед установкой нужно положить рядом с ботом два файла, "
+                    "которые вы скачиваете на сайте:[/white]\n\n"
+                    f"  • [cyan]config.py[/cyan] кладётся сюда:\n    [bold]{config_path}[/bold]\n"
+                    f"  • [cyan]texts.py[/cyan] кладётся сюда:\n    [bold]{texts_path}[/bold]\n\n"
+                    f"[white]Где взять файлы:[/white] [bold]{CONFIG_BUILDER_URL}[/bold]\n\n"
+                    "[white]Что сделать по шагам:[/white]\n"
+                    "  1. Откройте сайт и получите свои config.py и texts.py под ваш бот.\n"
+                    "  2. Загрузите оба файла на сервер по путям, указанным выше\n"
+                    "     (через SFTP/FileZilla или командой scp с компьютера).\n"
+                    "  3. Запустите установку снова: [bold]sudo solobot[/bold]\n\n"
+                    "[dim]В этих файлах ваши токены и пароли. Никому не пересылайте и не публикуйте их.[/dim]",
+                    border_style="yellow",
+                    title="[bold yellow]Нужны config.py и texts.py[/bold yellow]",
+                    padding=(1, 2),
+                )
+            )
             return
+        step_ok("config.py и texts.py на месте.")
+
+        step_rule(3, total, "Системные пакеты")
+        console.print("[dim]git, rsync, Python 3.12 и модуль venv — это база, без которой бот не запустится.[/dim]")
+        install_core_packages_if_needed()
+        step_ok("Системные пакеты готовы.")
+
+        step_rule(4, total, "Python-окружение")
+        console.print("[dim]Создаю виртуальное окружение venv/ и ставлю зависимости из requirements.txt.[/dim]")
+        install_dependencies()
+        if not os.path.exists(VENV_PYTHON):
+            step_fail("Виртуальное окружение не создано. Установка прервана.")
+            return
+        step_ok("Зависимости установлены.")
+
+        step_rule(5, total, "База данных")
+        console.print(
+            "[dim]Создаю таблицы по доступам из config.py. "
+            "Если данные базы в config.py неверные — шаг можно завершить позже, перезапустив бота из меню.[/dim]"
+        )
+        db_ready = initialize_database()
+        if db_ready:
+            step_ok("База данных инициализирована.")
+        else:
+            step_warn("База не готова: проверьте доступ к БД в config.py, затем перезапустите бота из меню.")
+
+        step_rule(6, total, "Служба автозапуска")
+        console.print("[dim]Создаю systemd-службу, чтобы бот стартовал сам и поднимался после перезагрузки сервера.[/dim]")
+        if not ensure_systemd_service():
+            step_fail("Не удалось настроить службу. Установка прервана.")
+            return
+        step_ok(f"Служба {SERVICE_NAME} настроена.")
+
+        step_rule(7, total, "Права и запуск")
+        console.print("[dim]Назначаю владельца и права на файлы проекта, закрываю секреты (config.py, тексты) и запускаю бота.[/dim]")
         fix_permissions()
         enable_and_start_service(start_now=db_ready)
-        console.print("[green]✅ Установка SoloBot завершена.[/green]")
+        step_ok("Права назначены, служба включена.")
+
+        console.print()
+        if db_ready:
+            console.print("[bold green]✅ Установка SoloBot завершена. Бот запущен.[/bold green]")
+        else:
+            console.print(
+                "[bold yellow]✅ Установка почти готова.[/bold yellow] "
+                "[yellow]Заполните config.py (токен и доступ к БД) и запустите бота из меню (перезапуск службы).[/yellow]"
+            )
     except subprocess.CalledProcessError as e:
-        console.print(f"[red]❌ Ошибка во время установки: {e}[/red]")
+        step_fail(f"Ошибка во время установки: {e}")
 
 
 def prompt_install_if_needed():
@@ -995,6 +1076,13 @@ def fix_permissions():
         console.log("[blue]Изменение прав доступа (u=rwX,go=rX)...[/blue]")
         subprocess.run(["sudo", "chmod", "-R", "u=rwX,go=rX", PROJECT_DIR], check=True)
 
+        for secret in ("config.py", os.path.join("handlers", "texts.py"), ".env"):
+            secret_path = os.path.join(PROJECT_DIR, secret)
+            if os.path.exists(secret_path):
+                console.log(f"[blue]Закрываю доступ к секретам: {secret} (600)...[/blue]")
+                subprocess.run(["sudo", "chown", f"{user}:{user}", secret_path], check=False)
+                subprocess.run(["sudo", "chmod", "600", secret_path], check=False)
+
         launcher_path = os.path.join(PROJECT_DIR, "cli_launcher.py")
         if os.path.exists(launcher_path):
             console.log("[blue]Установка флага +x для cli_launcher.py...[/blue]")
@@ -1221,6 +1309,47 @@ def get_remote_version(branch="main"):
     return None
 
 
+def _adopt_beta_config_files() -> list[str]:
+    renamed = []
+    pairs = [
+        (os.path.join(PROJECT_DIR, "config_beta.py"), os.path.join(PROJECT_DIR, "config.py")),
+        (os.path.join(PROJECT_DIR, "handlers", "texts_beta.py"), os.path.join(PROJECT_DIR, "handlers", "texts.py")),
+        (os.path.join(PROJECT_DIR, "texts_beta.py"), os.path.join(PROJECT_DIR, "handlers", "texts.py")),
+    ]
+    for src, dst in pairs:
+        if not os.path.exists(src):
+            continue
+        try:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            os.replace(src, dst)
+            renamed.append(f"{os.path.basename(src)} → {os.path.relpath(dst, PROJECT_DIR)}")
+        except Exception as e:
+            console.print(f"[yellow]Не удалось переименовать {os.path.basename(src)}: {e}[/yellow]")
+    return renamed
+
+
+def _prompt_config_update() -> None:
+    console.print(
+        Panel(
+            "[white]Если для этой версии вы скачали свежие config и texts на сайте — "
+            "загрузите их на сервер сейчас, и CLI подставит их сам.[/white]\n\n"
+            f"[white]Где взять:[/white] [bold]{CONFIG_BUILDER_URL}[/bold]\n\n"
+            "[white]Файлы беты называются [bold]config_beta.py[/bold] и [bold]texts_beta.py[/bold] — "
+            "CLI автоматически переименует их в обычные config.py и texts.py.[/white]\n"
+            f"[dim]Класть сюда: {PROJECT_DIR}/config_beta.py и {PROJECT_DIR}/handlers/texts_beta.py[/dim]",
+            border_style="cyan",
+            title="[bold cyan]Обновляли config и texts?[/bold cyan]",
+            padding=(1, 2),
+        )
+    )
+    renamed = _adopt_beta_config_files()
+    if renamed:
+        for item in renamed:
+            step_ok(f"Подставлен новый файл: {item}")
+    else:
+        step_warn("Новых config_beta.py / texts_beta.py не найдено — оставляю текущие config.py и texts.py.")
+
+
 def update_from_beta():
     local_version = get_local_version()
     remote_version = get_remote_version(branch="dev")
@@ -1268,6 +1397,8 @@ def update_from_beta():
         return
     install_git_if_needed()
     install_rsync_if_needed()
+
+    _prompt_config_update()
 
     try:
         os.chdir(PROJECT_DIR)
@@ -2125,20 +2256,45 @@ def _print_manual_caddy_hint(domain: str, web_port: int) -> None:
     console.print(f"\n[dim]---8<--- Caddyfile ---8<---[/dim]\n{snippet}\n[dim]---8<--- end ---8<---[/dim]\n")
 
 
-def _setup_ssl(domain):
-    """Получает SSL сертификат через certbot."""
-    if not _dns_precheck(domain):
-        return False
+def _ensure_certbot_nginx() -> bool:
     if not shutil.which("certbot"):
         try:
             run_with_status(
                 ["sudo", "apt-get", "install", "-y", "certbot", "python3-certbot-nginx"],
-                status_text="Установка certbot",
+                status_text="Установка certbot и плагина nginx",
                 check=True,
             )
+            return True
         except subprocess.CalledProcessError:
             console.print("[yellow]Не удалось установить certbot.[/yellow]")
             return False
+
+    plugins = subprocess.run(["sudo", "certbot", "plugins"], capture_output=True, text=True)
+    if "nginx" in (plugins.stdout + plugins.stderr):
+        return True
+
+    console.print("[yellow]certbot есть, но плагин для nginx не установлен. Ставлю плагин...[/yellow]")
+    try:
+        run_with_status(
+            ["sudo", "apt-get", "install", "-y", "python3-certbot-nginx"],
+            status_text="Установка плагина certbot-nginx",
+            check=True,
+        )
+        return True
+    except subprocess.CalledProcessError:
+        console.print(
+            "[yellow]Не удалось установить плагин. Установите вручную: "
+            "sudo apt-get install -y python3-certbot-nginx[/yellow]"
+        )
+        return False
+
+
+def _setup_ssl(domain):
+    """Получает SSL сертификат через certbot."""
+    if not _dns_precheck(domain):
+        return False
+    if not _ensure_certbot_nginx():
+        return False
     try:
         subprocess.run(
             [
