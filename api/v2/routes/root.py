@@ -17,9 +17,13 @@ from config import (
     CHANNEL_REQUIRED,
     CONNECT_ANDROID,
     CONNECT_IOS,
+    CONNECT_MACOS,
+    CONNECT_WINDOWS,
     DONATIONS_ENABLE,
     DOWNLOAD_ANDROID,
     DOWNLOAD_IOS,
+    DOWNLOAD_MACOS,
+    DOWNLOAD_PC,
     GIFT_BUTTON,
     HAPP_CRYPTOLINK,
     HWID_RESET_BUTTON,
@@ -204,8 +208,12 @@ async def site_config(session: AsyncSession = Depends(get_session)):
         "connect": {
             "ios": str(CONNECT_IOS or "").strip() or None,
             "android": str(CONNECT_ANDROID or "").strip() or None,
+            "macos": str(CONNECT_MACOS or "").strip() or None,
+            "windows": str(CONNECT_WINDOWS or "").strip() or None,
             "download_ios": str(DOWNLOAD_IOS or "").strip() or None,
             "download_android": str(DOWNLOAD_ANDROID or "").strip() or None,
+            "download_macos": str(DOWNLOAD_MACOS or "").strip() or None,
+            "download_windows": str(DOWNLOAD_PC or "").strip() or None,
         },
     }
 

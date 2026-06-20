@@ -18,7 +18,7 @@ from api.depends import (
     set_auth_cookie,
     set_is_admin_cookie,
 )
-from api.v2.routes.auth._common import _client_ip
+from api.v2.routes.auth._common import _client_ip, safe_return_path
 from database import identities as idb
 from logger import logger
 
@@ -42,8 +42,9 @@ except ImportError:
 try:
     from config import API_TOKEN as _API_TOKEN_RAW
 except ImportError:
-    _API_TOKEN_RAW = "solo-google-state-fallback"
-_GOOGLE_STATE_SECRET = hashlib.sha256(b"oauth-state:google:v1:" + str(_API_TOKEN_RAW or "").encode()).hexdigest()
+    _API_TOKEN_RAW = ""
+_GOOGLE_STATE_KEY = str(_API_TOKEN_RAW or "").strip() or secrets.token_hex(32)
+_GOOGLE_STATE_SECRET = hashlib.sha256(b"oauth-state:google:v1:" + _GOOGLE_STATE_KEY.encode()).hexdigest()
 
 
 GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -106,7 +107,7 @@ async def google_authorize(
     """Начинает OAuth-флоу Google: редиректит юзера на Google consent screen."""
     if not google_configured():
         raise HTTPException(status_code=503, detail="Google Sign-In не настроен на этом сервере")
-    safe_return = return_to if return_to.startswith("/") else _OAUTH_SUCCESS_URI
+    safe_return = safe_return_path(return_to, _OAUTH_SUCCESS_URI)
     state = _make_state(safe_return)
     params = {
         "client_id": _GOOGLE_CLIENT_ID,
@@ -199,7 +200,7 @@ async def google_callback(
         google_sub,
         _client_ip(request),
     )
-    redirect = RedirectResponse(return_to, status_code=302)
+    redirect = RedirectResponse(safe_return_path(return_to, _OAUTH_SUCCESS_URI), status_code=302)
     set_auth_cookie(redirect, token, request)
     set_is_admin_cookie(redirect, identity, request)
     return redirect
