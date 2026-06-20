@@ -15,7 +15,11 @@ from config import (
     CAPTCHA_ENABLE,
     CHANNEL_EXISTS,
     CHANNEL_REQUIRED,
+    CONNECT_ANDROID,
+    CONNECT_IOS,
     DONATIONS_ENABLE,
+    DOWNLOAD_ANDROID,
+    DOWNLOAD_IOS,
     GIFT_BUTTON,
     HAPP_CRYPTOLINK,
     HWID_RESET_BUTTON,
@@ -196,6 +200,12 @@ async def site_config(session: AsyncSession = Depends(get_session)):
             "currency_one_screen": currency_one_screen,
             "cashback_enabled": cashback_percent > 0,
             "cashback_percent": cashback_percent,
+        },
+        "connect": {
+            "ios": str(CONNECT_IOS or "").strip() or None,
+            "android": str(CONNECT_ANDROID or "").strip() or None,
+            "download_ios": str(DOWNLOAD_IOS or "").strip() or None,
+            "download_android": str(DOWNLOAD_ANDROID or "").strip() or None,
         },
     }
 
