@@ -198,8 +198,29 @@ async def auth_summary(
         except Exception as exc:
             logger.warning("[auth_summary] billing_user_id не определён: {}", exc)
             billing_user_id = None
+    anchor = await session.begin_nested()
+
+    async def _recover_anchor():
+        nonlocal anchor
+        try:
+            await anchor.rollback()
+        except Exception:
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+        try:
+            anchor = await session.begin_nested()
+        except Exception:
+            pass
+
     async def _safe(factory, default):
-        sp = await session.begin_nested()
+        try:
+            sp = await session.begin_nested()
+        except Exception as exc:
+            logger.warning("[auth_summary] пропущена агрегация: {}", exc)
+            await _recover_anchor()
+            return default
         try:
             result = await factory()
             await sp.commit()
@@ -210,6 +231,7 @@ async def auth_summary(
                 await sp.rollback()
             except Exception:
                 pass
+            await _recover_anchor()
             return default
 
     async def _count(model, *conds) -> int:
@@ -226,6 +248,13 @@ async def auth_summary(
     ref = await _safe(lambda: get_referral_stats(session, billing_user_id), {}) or {}
     partner = await _safe(lambda: _resolve_partner_snapshot(session, int(billing_user_id)), {}) or {}
     unread_notifications = int(await _safe(lambda: count_unread_for_identity(session, identity.id), 0) or 0)
+    try:
+        await anchor.commit()
+    except Exception:
+        try:
+            await anchor.rollback()
+        except Exception:
+            pass
     return AccountSummaryResponse(
         identity_id=identity.id,
         email=identity.email,
