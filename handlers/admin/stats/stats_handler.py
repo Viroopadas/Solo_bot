@@ -6,7 +6,7 @@ import pytz
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -567,8 +567,57 @@ def _format_trend(current: float, previous: float, suffix: str = "") -> str:
     return f" <i>{arrow} {sign}{abs(diff):g}{suffix} к пред. дню</i>"
 
 
+async def _day_users_revenue(session, moscow_tz, day: date) -> tuple[int, float]:
+    start, end = _moscow_day_window(day, moscow_tz)
+    users = await count_users_registered_between(
+        session,
+        start.astimezone(pytz.UTC).replace(tzinfo=None),
+        end.astimezone(pytz.UTC).replace(tzinfo=None),
+    )
+    revenue = await sum_payments_between(session, start.replace(tzinfo=None), end.replace(tzinfo=None))
+    return users, revenue
+
+
+async def _collect_daily_series(session, moscow_tz, last_day: date, days: int):
+    labels: list[str] = []
+    users: list[int] = []
+    revenue: list[float] = []
+    for offset in range(days - 1, -1, -1):
+        day = last_day - timedelta(days=offset)
+        u, r = await _day_users_revenue(session, moscow_tz, day)
+        labels.append(day.strftime("%d"))
+        users.append(u)
+        revenue.append(r)
+    return labels, users, revenue
+
+
+async def _send_report_to_admins(session: AsyncSession, text: str, chart) -> None:
+    from database.models import Admin
+
+    moderator_ids = set(
+        (await session.execute(select(Admin.tg_id).where(Admin.role == "moderator"))).scalars().all()
+    )
+    photo_bytes = chart.getvalue() if chart is not None else None
+    for admin_id in ADMIN_ID:
+        if admin_id in moderator_ids:
+            continue
+        try:
+            if photo_bytes is not None:
+                await bot.send_photo(
+                    admin_id,
+                    photo=BufferedInputFile(photo_bytes, filename="stats.png"),
+                    caption=text,
+                )
+            else:
+                await bot.send_message(admin_id, text)
+        except Exception as e:
+            logger.warning(f"[Stats] Не удалось отправить отчёт admin={admin_id}: {e}")
+
+
 async def send_daily_stats_report(session: AsyncSession):
     try:
+        from handlers.admin.stats.report_charts import render_stats_chart
+
         moscow_tz = pytz.timezone("Europe/Moscow")
         now_moscow = datetime.now(moscow_tz)
         update_time = now_moscow.strftime("%d.%m.%Y %H:%M")
@@ -576,25 +625,24 @@ async def send_daily_stats_report(session: AsyncSession):
         report_date = now_moscow.date() - timedelta(days=1)
         prev_date = report_date - timedelta(days=1)
 
-        day_start, day_end = _moscow_day_window(report_date, moscow_tz)
-        prev_start, prev_end = _moscow_day_window(prev_date, moscow_tz)
+        new_users, revenue = await _day_users_revenue(session, moscow_tz, report_date)
+        new_users_prev, revenue_prev = await _day_users_revenue(session, moscow_tz, prev_date)
 
-        day_start_utc = day_start.astimezone(pytz.UTC).replace(tzinfo=None)
-        day_end_utc = day_end.astimezone(pytz.UTC).replace(tzinfo=None)
-        prev_start_utc = prev_start.astimezone(pytz.UTC).replace(tzinfo=None)
-        prev_end_utc = prev_end.astimezone(pytz.UTC).replace(tzinfo=None)
-
-        new_users = await count_users_registered_between(session, day_start_utc, day_end_utc)
-        new_users_prev = await count_users_registered_between(session, prev_start_utc, prev_end_utc)
-
-        revenue = await sum_payments_between(session, day_start.replace(tzinfo=None), day_end.replace(tzinfo=None))
-        revenue_prev = await sum_payments_between(session, prev_start.replace(tzinfo=None), prev_end.replace(tzinfo=None))
+        labels, users_series, revenue_series = await _collect_daily_series(session, moscow_tz, report_date, 14)
+        chart = render_stats_chart(
+            labels,
+            [
+                {"name": "RUB / day", "color": (63, 185, 80), "values": revenue_series},
+                {"name": "New users / day", "color": (88, 166, 255), "values": [float(v) for v in users_series]},
+            ],
+        )
 
         text = (
             f"🌙 <b>Ежедневная сводка</b>\n"
             f"📅 <i>{report_date.strftime('%d.%m.%Y')} · 00:00–23:59 МСК</i>\n\n"
             f"👤 Новых пользователей: <b>{new_users}</b>{_format_trend(new_users, new_users_prev)}\n"
             f"💰 Доход за день: <b>{revenue} ₽</b>{_format_trend(revenue, revenue_prev, ' ₽')}\n\n"
+            f"📊 <i>График — динамика за 14 дней</i>\n"
             f"🔮 <b>Прогноз по темпу дня</b>\n"
             f"<blockquote>"
             f"├ 📆 За неделю: <b>~{round(new_users * 7)}</b> польз. · <b>~{round(revenue * 7)} ₽</b>\n"
@@ -603,18 +651,86 @@ async def send_daily_stats_report(session: AsyncSession):
             f"⏱️ <i>Сформировано: {update_time} МСК</i>"
         )
 
-        from database.models import Admin
-
-        moderator_ids = set(
-            (await session.execute(select(Admin.tg_id).where(Admin.role == "moderator"))).scalars().all()
-        )
-        for admin_id in ADMIN_ID:
-            if admin_id in moderator_ids:
-                continue
-            await bot.send_message(admin_id, text)
+        await _send_report_to_admins(session, text, chart)
 
     except Exception as e:
         logger.error(f"[Stats] Ошибка при отправке статистики: {e}")
+
+
+_MONTH_NAMES_RU = {
+    1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель", 5: "Май", 6: "Июнь",
+    7: "Июль", 8: "Август", 9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь",
+}
+
+
+def _month_window(year: int, month: int) -> tuple[date, date]:
+    start = date(year, month, 1)
+    end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    return start, end
+
+
+async def send_monthly_stats_report(session: AsyncSession):
+    try:
+        from handlers.admin.stats.report_charts import render_stats_chart
+
+        moscow_tz = pytz.timezone("Europe/Moscow")
+        now_moscow = datetime.now(moscow_tz)
+        update_time = now_moscow.strftime("%d.%m.%Y %H:%M")
+
+        this_month_first = now_moscow.date().replace(day=1)
+        last_day = this_month_first - timedelta(days=1)
+        month_start, month_end = _month_window(last_day.year, last_day.month)
+        days_in_month = (month_end - month_start).days
+
+        prev_last_day = month_start - timedelta(days=1)
+        prev_start, prev_end = _month_window(prev_last_day.year, prev_last_day.month)
+
+        def _to_utc_naive(d: date) -> datetime:
+            return moscow_tz.localize(datetime.combine(d, datetime.min.time())).astimezone(pytz.UTC).replace(tzinfo=None)
+
+        def _to_local_naive(d: date) -> datetime:
+            return moscow_tz.localize(datetime.combine(d, datetime.min.time())).replace(tzinfo=None)
+
+        users_total = await count_users_registered_between(session, _to_utc_naive(month_start), _to_utc_naive(month_end))
+        users_prev = await count_users_registered_between(session, _to_utc_naive(prev_start), _to_utc_naive(prev_end))
+        revenue_total = await sum_payments_between(session, _to_local_naive(month_start), _to_local_naive(month_end))
+        revenue_prev = await sum_payments_between(session, _to_local_naive(prev_start), _to_local_naive(prev_end))
+
+        labels, users_series, revenue_series = await _collect_daily_series(session, moscow_tz, last_day, days_in_month)
+
+        chart = render_stats_chart(
+            labels,
+            [
+                {"name": "RUB / day", "color": (63, 185, 80), "values": revenue_series},
+                {"name": "New users / day", "color": (88, 166, 255), "values": [float(v) for v in users_series]},
+            ],
+        )
+
+        best_idx = max(range(len(revenue_series)), key=lambda i: revenue_series[i]) if revenue_series else 0
+        best_day_label = labels[best_idx] if labels else "—"
+        best_day_value = revenue_series[best_idx] if revenue_series else 0.0
+        avg_users = round(users_total / days_in_month, 1) if days_in_month else 0
+        avg_revenue = round(revenue_total / days_in_month, 1) if days_in_month else 0
+
+        month_title = f"{_MONTH_NAMES_RU.get(last_day.month, '')} {last_day.year}"
+        text = (
+            f"📊 <b>Ежемесячный отчёт</b>\n"
+            f"🗓️ <i>{month_title}</i>\n\n"
+            f"👤 Новых пользователей: <b>{users_total}</b>{_format_trend(users_total, users_prev)}\n"
+            f"💰 Доход за месяц: <b>{revenue_total} ₽</b>{_format_trend(revenue_total, revenue_prev, ' ₽')}\n\n"
+            f"📈 <b>Итоги месяца</b>\n"
+            f"<blockquote>"
+            f"├ 📅 В среднем за день: <b>~{avg_users}</b> польз. · <b>~{avg_revenue} ₽</b>\n"
+            f"├ 🏆 Лучший день: <b>{best_day_label}</b> · <b>{best_day_value} ₽</b>\n"
+            f"└ 🔢 Дней в месяце: <b>{days_in_month}</b>\n"
+            f"</blockquote>\n"
+            f"⏱️ <i>Сформировано: {update_time} МСК</i>"
+        )
+
+        await _send_report_to_admins(session, text, chart)
+
+    except Exception as e:
+        logger.error(f"[Stats] Ошибка при отправке месячного отчёта: {e}")
 
 
 @router.message(F.text == "Сводка", IsAdminFilter())

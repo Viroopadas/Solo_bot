@@ -164,7 +164,7 @@ except ImportError:
             self.print(*args)
 
         @contextmanager
-        def status(self, message):
+        def status(self, message, **kwargs):
             self.print(message)
             yield
 
@@ -3357,7 +3357,7 @@ def show_menu():
         return text if enabled else f"[muted]{text}  · нужен пункт 9[/muted]"
 
     table = Table(
-        title="Solobot CLI v0.5.9",
+        title="Solobot CLI v0.6.0",
         title_style="title",
         header_style="muted",
         box=box.SIMPLE,
