@@ -88,7 +88,8 @@ except ImportError:
             print(_strip_markup(str(renderable)))
 
     class SpinnerColumn:
-        pass
+        def __init__(self, *args, **kwargs) -> None:
+            pass
 
     class BarColumn:
         def __init__(self, *args, **kwargs) -> None:
@@ -3357,7 +3358,7 @@ def show_menu():
         return text if enabled else f"[muted]{text}  · нужен пункт 9[/muted]"
 
     table = Table(
-        title="Solobot CLI v0.6.0",
+        title="Solobot CLI v0.6.1",
         title_style="title",
         header_style="muted",
         box=box.SIMPLE,
