@@ -1352,6 +1352,45 @@ async def get_analytics_overview(
         )
     ) or 0
 
+    login_visitors = (
+        await session.scalar(
+            select(func.count(func.distinct(WebPageView.visitor_id)))
+            .where(WebPageView.created_at >= since)
+            .where(WebPageView.page_slug == "login")
+        )
+    ) or 0
+    tariffs_visitors = (
+        await session.scalar(
+            select(func.count(func.distinct(WebPageView.visitor_id)))
+            .where(WebPageView.created_at >= since)
+            .where(WebPageView.page_slug == "tariffs")
+        )
+    ) or 0
+
+    errors_unresolved = (
+        await session.scalar(
+            select(func.count()).select_from(WebErrorReport).where(WebErrorReport.resolved.is_(False))
+        )
+    ) or 0
+    errors_new = (
+        await session.scalar(
+            select(func.count()).select_from(WebErrorReport).where(WebErrorReport.first_seen_at >= since)
+        )
+    ) or 0
+    top_errors_rows = (
+        await session.execute(
+            select(
+                WebErrorReport.error_name,
+                WebErrorReport.error_message,
+                WebErrorReport.count,
+                WebErrorReport.last_seen_at,
+            )
+            .where(WebErrorReport.resolved.is_(False))
+            .order_by(WebErrorReport.count.desc())
+            .limit(5)
+        )
+    ).all()
+
     registrations = (
         await session.scalar(
             select(func.count()).select_from(Identity).where(Identity.created_at >= since_naive)
@@ -1601,6 +1640,26 @@ async def get_analytics_overview(
         ],
         "activeTrend": sub_dynamics["activeTrend"],
         "retention": retention,
+        "funnel": [
+            {"key": "visitors", "value": int(totals_row.visitors or 0) if totals_row else 0},
+            {"key": "login", "value": int(login_visitors)},
+            {"key": "tariffs", "value": int(tariffs_visitors)},
+            {"key": "checkout", "value": int(checkout_visitors)},
+            {"key": "paid", "value": int(payments_row.payers or 0) if payments_row else 0},
+        ],
+        "errors": {
+            "unresolved": int(errors_unresolved),
+            "newInPeriod": int(errors_new),
+            "top": [
+                {
+                    "name": r[0] or "Error",
+                    "message": (r[1] or "")[:120],
+                    "count": int(r[2] or 0),
+                    "lastSeen": r[3].isoformat() if r[3] else "",
+                }
+                for r in top_errors_rows
+            ],
+        },
         "tariffs": [
             {"tariff": r.name or "Без тарифа", "count": int(r.cnt)}
             for r in tariff_rows

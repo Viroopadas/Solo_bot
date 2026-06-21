@@ -298,24 +298,47 @@ async def change_client_email(
     new_sub_id: str,
     client_id: str,
 ) -> bool:
-    """Меняет email и sub_id клиента (UUID/срок/квота сохраняются). Старая ссылка перестаёт работать."""
+    """Меняет email/ссылку клиента: удаляет старого и создаёт нового с тем же UUID.
+
+    3x-ui не умеет переименовывать email через updateClient (матчит по email → record not found),
+    поэтому delete+add. UUID (client_id) сохраняется → активные конфиги юзера продолжают работать,
+    срок и квота переносятся.
+    """
     try:
         client = await xui.client.get_by_email(old_email)
-        if not client:
+        if not client or not _client_identity(client):
             logger.warning(f"Клиент {old_email} не найден для смены ссылки (ID {client_id}).")
             return False
 
-        inbound = await _get_inbound_cached(xui, inbound_id)
-        flow = _resolve_flow(inbound)
+        expiry_time = int(getattr(client, "expiry_time", 0) or 0)
+        total_gb = int(getattr(client, "total_gb", 0) or 0)
+        limit_ip = int(getattr(client, "limit_ip", 0) or 0)
+        enable = bool(getattr(client, "enable", True))
+        tg_id_val = getattr(client, "tg_id", "") or ""
 
-        client.email = new_email
-        client.sub_id = new_sub_id
-        _apply_client_identity(client, client_id)
-        client.flow = flow
-        client.inbound_id = inbound_id
+        if not await delete_client(xui, inbound_id, old_email, client_id):
+            logger.error(f"Не удалось удалить клиента {old_email} при смене ссылки (ID {client_id}).")
+            return False
 
-        await xui.client.update(client_id, client)
-        logger.info(f"Email клиента изменён {old_email} → {new_email} (ID {client_id}).")
+        result = await add_client(
+            xui,
+            ClientConfig(
+                client_id=client_id,
+                email=new_email,
+                tg_id=tg_id_val,
+                limit_ip=limit_ip,
+                total_gb=total_gb,
+                expiry_time=expiry_time,
+                enable=enable,
+                inbound_id=inbound_id,
+                sub_id=new_sub_id,
+            ),
+        )
+        if not result or result.get("status") not in ("success", "duplicate"):
+            logger.error(f"Не удалось создать клиента {new_email} при смене ссылки (ID {client_id}).")
+            return False
+
+        logger.info(f"Ссылка сменена: {old_email} → {new_email} (ID {client_id}).")
         return True
 
     except Exception as e:
