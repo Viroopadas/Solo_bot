@@ -290,6 +290,39 @@ async def toggle_client(
         return False
 
 
+async def change_client_email(
+    xui: py3xui.AsyncApi,
+    inbound_id: int,
+    old_email: str,
+    new_email: str,
+    new_sub_id: str,
+    client_id: str,
+) -> bool:
+    """Меняет email и sub_id клиента (UUID/срок/квота сохраняются). Старая ссылка перестаёт работать."""
+    try:
+        client = await xui.client.get_by_email(old_email)
+        if not client:
+            logger.warning(f"Клиент {old_email} не найден для смены ссылки (ID {client_id}).")
+            return False
+
+        inbound = await _get_inbound_cached(xui, inbound_id)
+        flow = _resolve_flow(inbound)
+
+        client.email = new_email
+        client.sub_id = new_sub_id
+        _apply_client_identity(client, client_id)
+        client.flow = flow
+        client.inbound_id = inbound_id
+
+        await xui.client.update(client_id, client)
+        logger.info(f"Email клиента изменён {old_email} → {new_email} (ID {client_id}).")
+        return True
+
+    except Exception as e:
+        logger.error(f"Ошибка смены email {old_email} → {new_email} (ID {client_id}): {e}")
+        return False
+
+
 def build_vless_link_from_inbound(
     inbound: py3xui.Inbound,
     user_uuid: str,

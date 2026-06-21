@@ -668,6 +668,24 @@ async def update_key_subscription_links(session: AsyncSession, email: str, link:
     return ok
 
 
+async def update_key_email_and_link(
+    session: AsyncSession, old_email: str, new_email: str, link: str, client_id: str
+) -> bool:
+    stmt = (
+        update(Key)
+        .where(Key.email == old_email)
+        .values(email=new_email, key=link)
+        .returning(Key.client_id)
+    )
+    res = await session.execute(stmt)
+    ok = res.scalar_one_or_none() is not None
+    if ok:
+        await invalidate_key_details(old_email)
+        await invalidate_key_details(new_email)
+        await invalidate_key_email(client_id)
+    return ok
+
+
 async def save_key_config_with_mode(
     session: AsyncSession,
     email: str,

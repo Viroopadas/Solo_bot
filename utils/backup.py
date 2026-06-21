@@ -246,6 +246,15 @@ def _create_backup_archive() -> tuple[str | None, Exception | None]:
                 else:
                     logger.warning("[Backup] img/ не найдена")
 
+                uploads_dir = project_root / "static" / "web_uploads"
+                if uploads_dir.exists() and uploads_dir.is_dir():
+                    upload_files = [f for f in uploads_dir.iterdir() if f.is_file()]
+                    for upload_file in upload_files:
+                        tar.add(upload_file, arcname=f"{archive_folder}/web_uploads/{upload_file.name}")
+                    logger.info("[Backup] web_uploads/ в архив ({} файлов)", len(upload_files))
+                else:
+                    logger.info("[Backup] web_uploads/ пуста или не найдена")
+
         logger.info("[Backup] Архив создан: {}", archive_path)
 
         if db_backup_path and os.path.exists(db_backup_path) and db_backup_path != str(archive_path):
