@@ -17,7 +17,8 @@ from api.v2.schemas.web_public import (
     TariffPurchaseRequest,
     TariffPurchaseResponse,
 )
-from core.bootstrap import PAYMENTS_CONFIG
+from core.bootstrap import MODES_CONFIG, PAYMENTS_CONFIG
+from config import TRIAL_TIME_DISABLE
 from core.redis_cache import cache_get, cache_key, cache_set
 from database import (
     get_balance,
@@ -93,11 +94,18 @@ def _public_tariffs_cache_key(
     group_code: str | None,
     tariff_ids: str | None,
     filter_vless: str | None,
+    site_trial_disabled: bool,
 ) -> str:
     normalized_group = (group_code or "").strip().lower()
     normalized_ids = ",".join(part.strip() for part in (tariff_ids or "").split(",") if part.strip())
     normalized_vless = (filter_vless or "").strip().lower()
-    return cache_key("tariffs_public", normalized_group or "-", normalized_ids or "-", normalized_vless or "-")
+    return cache_key(
+        "tariffs_public",
+        normalized_group or "-",
+        normalized_ids or "-",
+        normalized_vless or "-",
+        "notrial" if site_trial_disabled else "-",
+    )
 
 
 @public_router.get("/groups", response_model=list[TariffGroup])
@@ -125,7 +133,10 @@ async def get_tariffs_public(
     session: AsyncSession = Depends(get_session),
 ):
     """Публичный список активных тарифов (без авторизации)."""
-    cache_token = _public_tariffs_cache_key(group_code, tariff_ids, filter_vless)
+    site_trial_disabled = bool(MODES_CONFIG.get("TRIAL_TIME_DISABLED", TRIAL_TIME_DISABLE)) or bool(
+        MODES_CONFIG.get("WEB_TRIAL_DISABLED", False)
+    )
+    cache_token = _public_tariffs_cache_key(group_code, tariff_ids, filter_vless, site_trial_disabled)
     cached = await cache_get(cache_token)
     if isinstance(cached, list):
         return cached
@@ -156,6 +167,8 @@ async def get_tariffs_public(
         q = q.where(Tariff.vless.is_(True))
     elif filter_vless == "app":
         q = q.where(Tariff.vless.is_(False))
+    if site_trial_disabled:
+        q = q.where((Tariff.group_code.is_(None)) | (Tariff.group_code != "trial"))
     result = await session.execute(q)
     rows = result.scalars().all()
     payload = [_tariff_to_public(t).model_dump() for t in rows]
@@ -344,6 +357,12 @@ async def activate_trial(
     """Активация триала (бесплатного или платного). Доступно 1 раз."""
     from database import get_trial, update_trial
     from database.tariffs import get_tariffs
+
+    trial_disabled = bool(MODES_CONFIG.get("TRIAL_TIME_DISABLED", TRIAL_TIME_DISABLE)) or bool(
+        MODES_CONFIG.get("WEB_TRIAL_DISABLED", False)
+    )
+    if trial_disabled:
+        raise HTTPException(status_code=403, detail="Пробный период на сайте недоступен")
 
     tg_id = await idb.ensure_billing_user_for_identity(session, identity)
 

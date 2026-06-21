@@ -147,6 +147,22 @@ async def site_config(session: AsyncSession = Depends(get_session)):
     from api.v2.routes.partners import partners_table_exists
 
     partner_enabled = bool(_partner_feature_enabled()) and await partners_table_exists(session)
+
+    from sqlalchemy import select
+
+    from database.models import WebFlow
+
+    trial_flow_ids: list[str] = []
+    flows_rows = await session.execute(select(WebFlow.id, WebFlow.nodes))
+    for flow_id, nodes in flows_rows.all():
+        for node in nodes or []:
+            if not isinstance(node, dict):
+                continue
+            action_cfg = node.get("action_config")
+            if isinstance(action_cfg, dict) and action_cfg.get("action_type") == "activate-trial":
+                trial_flow_ids.append(flow_id)
+                break
+
     return {
         "bot_username": bot_username or None,
         "telegram_web_app_short_name": webapp_short,
@@ -175,7 +191,9 @@ async def site_config(session: AsyncSession = Depends(get_session)):
             "country_selection_enabled": bool(MODES_CONFIG.get("COUNTRY_SELECTION_ENABLED", USE_COUNTRY_SELECTION)),
             "captcha_enabled": bool(MODES_CONFIG.get("CAPTCHA_ENABLED", CAPTCHA_ENABLE)),
             "channel_check_enabled": bool(MODES_CONFIG.get("CHANNEL_CHECK_ENABLED", CHANNEL_REQUIRED)),
-            "trial_enabled": not bool(MODES_CONFIG.get("TRIAL_TIME_DISABLED", TRIAL_TIME_DISABLE)),
+            "trial_enabled": not bool(MODES_CONFIG.get("TRIAL_TIME_DISABLED", TRIAL_TIME_DISABLE))
+            and not bool(MODES_CONFIG.get("WEB_TRIAL_DISABLED", False)),
+            "trial_flow_ids": trial_flow_ids,
             "mini_app_enabled": bool(MODES_CONFIG.get("REMNAWAVE_WEBAPP_ENABLED", REMNAWAVE_WEBAPP)),
             "mini_app_open_in_browser": bool(
                 MODES_CONFIG.get("REMNAWAVE_WEBAPP_OPEN_IN_BROWSER", REMNAWAVE_WEBAPP_OPEN_IN_BROWSER)
