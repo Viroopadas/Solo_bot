@@ -17,6 +17,35 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
+def _ensure_cli_deps() -> None:
+    """Бутстрап: ставит rich+requests системным pip, если их нет.
+
+    CLI запускают одним файлом на голом сервере, где venv проекта ещё нет.
+    Happy-path должен идти на настоящем rich, а не на заглушках. Если pip
+    недоступен (нет сети / залочен) — молча уходим на минимальный фолбэк.
+    """
+    try:
+        import requests  # noqa: F401
+        import rich  # noqa: F401
+
+        return
+    except ImportError:
+        pass
+
+    for extra in ([], ["--break-system-packages"]):
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-q", "--disable-pip-version-check", *extra, "rich", "requests"],
+                check=True,
+            )
+            return
+        except Exception:
+            continue
+
+
+_ensure_cli_deps()
+
+
 try:
     import requests
 except ImportError:
@@ -3358,7 +3387,7 @@ def show_menu():
         return text if enabled else f"[muted]{text}  · нужен пункт 9[/muted]"
 
     table = Table(
-        title="Solobot CLI v0.6.1",
+        title="Solobot CLI v0.6.2",
         title_style="title",
         header_style="muted",
         box=box.SIMPLE,
