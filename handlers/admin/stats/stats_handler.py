@@ -359,6 +359,8 @@ async def _build_stats_chart(session: AsyncSession, period: int):
     active_map = {a["date"]: a["active"] for a in dyn.get("activeTrend", [])}
     created_series = [float((ev_map.get(d.strftime("%Y-%m-%d")) or {}).get("created", 0)) for d in dates]
     renewed_series = [float((ev_map.get(d.strftime("%Y-%m-%d")) or {}).get("renewed", 0)) for d in dates]
+    expired_series = [float((ev_map.get(d.strftime("%Y-%m-%d")) or {}).get("expired", 0)) for d in dates]
+    net_series = [created_series[i] - expired_series[i] for i in range(len(dates))]
     active_series = [float(active_map.get(d.strftime("%Y-%m-%d"), 0)) for d in dates]
 
     panels = [
@@ -366,6 +368,8 @@ async def _build_stats_chart(session: AsyncSession, period: int):
         {"name": "Новые пользователи/день", "color": (88, 166, 255), "values": users_series},
         {"name": "Новые подписки/день", "color": (191, 135, 255), "values": created_series},
         {"name": "Продления/день", "color": (240, 160, 70), "values": renewed_series},
+        {"name": "Отток подписок/день", "color": (240, 90, 90), "values": expired_series},
+        {"name": "Прирост базы (новые − отток)", "color": (45, 200, 160), "values": net_series},
     ]
     if any(active_series):
         panels.append({"name": "Активные подписки", "color": (244, 114, 182), "values": active_series})
@@ -405,7 +409,7 @@ async def handle_stats_charts(callback_query: CallbackQuery, callback_data: Admi
         photo = BufferedInputFile(chart.getvalue(), filename="stats.png")
         caption = (
             f"📊 <b>Динамика за {period} дн.</b>\n"
-            "Сверху вниз: доход ₽, новые пользователи, новые подписки, продления"
+            "Сверху вниз: доход, новые пользователи, новые подписки, продления, отток, прирост базы"
         )
         kb = build_stats_charts_kb(period)
         msg = callback_query.message

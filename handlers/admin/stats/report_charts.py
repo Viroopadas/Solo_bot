@@ -108,23 +108,45 @@ def render_stats_chart(x_labels: list[str], panels: list[dict]) -> io.BytesIO | 
             )
             draw.text((left_pad - 8, panel_top), name, font=f_title, fill=color)
 
-            maxv = _nice_max(max(values) if values else 1)
-            for frac in (0.5, 1.0):
-                gy = baseline - plot_h * frac
-                draw.line([(left_pad - 6, gy), (left_pad + plot_w, gy)], fill=_GRID, width=1)
-                draw.text((6, gy - 8), _fmt_value(maxv * frac), font=f_small, fill=_MUTED)
+            vmax = max(values) if values else 1.0
+            vmin = min(values) if values else 0.0
+            top = _nice_max(vmax) if vmax > 0 else 0.0
+            bottom = -_nice_max(-vmin) if vmin < 0 else 0.0
+            span = (top - bottom) or 1.0
+
+            def _y_of(val: float) -> float:
+                return baseline - ((val - bottom) / span) * plot_h
+
+            zero_y = _y_of(0.0)
+
+            if bottom < 0:
+                for level in (top, 0.0, bottom):
+                    gy = _y_of(level)
+                    draw.line([(left_pad - 6, gy), (left_pad + plot_w, gy)], fill=_GRID, width=1)
+                    draw.text((6, gy - 8), _fmt_value(level), font=f_small, fill=_MUTED)
+            else:
+                for frac in (0.5, 1.0):
+                    gy = baseline - plot_h * frac
+                    draw.line([(left_pad - 6, gy), (left_pad + plot_w, gy)], fill=_GRID, width=1)
+                    draw.text((6, gy - 8), _fmt_value(top * frac), font=f_small, fill=_MUTED)
 
             for i, v in enumerate(values):
                 x0 = left_pad + i * slot + bar_off
-                h = int((v / maxv) * plot_h) if maxv else 0
-                if h < 2 and v > 0:
-                    h = 2
-                y0 = baseline - h
-                draw.rounded_rectangle([x0, y0, x0 + bar_w, baseline], radius=4, fill=color)
-                if show_values and v > 0:
+                yv = _y_of(v)
+                y_top = min(zero_y, yv)
+                y_bot = max(zero_y, yv)
+                if v != 0 and y_bot - y_top < 2:
+                    if v > 0:
+                        y_top = y_bot - 2
+                    else:
+                        y_bot = y_top + 2
+                bar_color = (240, 90, 90) if v < 0 else color
+                draw.rounded_rectangle([x0, y_top, x0 + bar_w, y_bot], radius=4, fill=bar_color)
+                if show_values and v != 0:
                     label = _fmt_value(v)
                     tw = draw.textlength(label, font=f_small)
-                    draw.text((x0 + bar_w / 2 - tw / 2, y0 - 17), label, font=f_small, fill=_TEXT)
+                    ly = (y_top - 17) if v > 0 else (y_bot + 3)
+                    draw.text((x0 + bar_w / 2 - tw / 2, ly), label, font=f_small, fill=_TEXT)
 
         for i, lbl in enumerate(x_labels):
             if i % label_step != 0 and i != len(x_labels) - 1:
