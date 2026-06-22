@@ -330,6 +330,26 @@ async def delete_web_page(
     await session.execute(delete(WebBlock).where(WebBlock.page_slug == slug))
     await session.execute(delete(WebThemeModel).where(WebThemeModel.page_slug == slug))
     await session.delete(page)
+
+    flows_q = await session.execute(select(WebFlow))
+    for flow in flows_q.scalars().all():
+        nodes = flow.nodes
+        if not isinstance(nodes, list):
+            continue
+        changed = False
+        new_nodes = []
+        for node in nodes:
+            if isinstance(node, dict) and (node.get("page_slug") == slug or node.get("pageSlug") == slug):
+                node = dict(node)
+                if node.get("page_slug") == slug:
+                    node["page_slug"] = None
+                if node.get("pageSlug") == slug:
+                    node["pageSlug"] = None
+                changed = True
+            new_nodes.append(node)
+        if changed:
+            flow.nodes = new_nodes
+
     await session.flush()
     await bump_site_revision(session)
     await _audit_web_admin(session, identity, "page.delete", entity_type="page", entity_id=slug)

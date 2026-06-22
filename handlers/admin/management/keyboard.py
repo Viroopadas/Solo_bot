@@ -81,7 +81,7 @@ def build_database_kb() -> InlineKeyboardMarkup:
         callback_data=AdminPanelCallback(action="restore_db").pack(),
     )
     builder.button(
-        text="🖥 Восстановить с сервера (без лимита)",
+        text="🖥 Восстановить с сервера",
         callback_data=AdminPanelCallback(action="restore_db_local").pack(),
     )
     builder.button(

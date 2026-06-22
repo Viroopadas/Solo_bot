@@ -55,7 +55,13 @@ from filters.admin import HasPermission
 from filters.permissions import PERM_STATS
 
 from ..panel.keyboard import AdminPanelCallback, build_admin_back_kb
-from .keyboard import build_audit_refresh_kb, build_audit_reset_confirm_kb, build_audit_source_kb, build_stats_kb
+from .keyboard import (
+    build_audit_refresh_kb,
+    build_audit_reset_confirm_kb,
+    build_audit_source_kb,
+    build_stats_charts_kb,
+    build_stats_kb,
+)
 
 
 router = Router()
@@ -330,6 +336,87 @@ async def handle_stats(callback_query: CallbackQuery, session: AsyncSession):
     except Exception as e:
         logger.error(f"Error in user_stats_menu: {e}")
         await callback_query.answer("Произошла ошибка при получении статистики", show_alert=True)
+
+
+async def _build_stats_chart(session: AsyncSession, period: int):
+    from database.subscription_events import get_subscription_dynamics
+    from handlers.admin.stats.report_charts import render_stats_chart
+
+    moscow_tz = pytz.timezone("Europe/Moscow")
+    today = datetime.now(moscow_tz).date()
+    dates = [today - timedelta(days=i) for i in range(period - 1, -1, -1)]
+    labels = [d.strftime("%d") for d in dates]
+
+    users_series: list[float] = []
+    revenue_series: list[float] = []
+    for d in dates:
+        users, revenue = await _day_users_revenue(session, moscow_tz, d)
+        users_series.append(float(users))
+        revenue_series.append(float(revenue))
+
+    dyn = await get_subscription_dynamics(session, period)
+    ev_map = {e["date"]: e for e in dyn.get("dailyEvents", [])}
+    active_map = {a["date"]: a["active"] for a in dyn.get("activeTrend", [])}
+    created_series = [float((ev_map.get(d.strftime("%Y-%m-%d")) or {}).get("created", 0)) for d in dates]
+    renewed_series = [float((ev_map.get(d.strftime("%Y-%m-%d")) or {}).get("renewed", 0)) for d in dates]
+    active_series = [float(active_map.get(d.strftime("%Y-%m-%d"), 0)) for d in dates]
+
+    panels = [
+        {"name": "Доход, руб/день", "color": (63, 185, 80), "values": revenue_series},
+        {"name": "Новые пользователи/день", "color": (88, 166, 255), "values": users_series},
+        {"name": "Новые подписки/день", "color": (191, 135, 255), "values": created_series},
+        {"name": "Продления/день", "color": (240, 160, 70), "values": renewed_series},
+    ]
+    if any(active_series):
+        panels.append({"name": "Активные подписки", "color": (244, 114, 182), "values": active_series})
+
+    return render_stats_chart(labels, panels)
+
+
+@router.callback_query(AdminPanelCallback.filter(F.action == "stats_charts_close"), IsAdminFilter())
+async def handle_stats_charts_close(callback_query: CallbackQuery):
+    try:
+        await callback_query.message.delete()
+    except Exception:
+        pass
+    await callback_query.answer()
+
+
+@router.callback_query(AdminPanelCallback.filter(F.action.startswith("stats_chart")), IsAdminFilter())
+async def handle_stats_charts(callback_query: CallbackQuery, callback_data: AdminPanelCallback, session: AsyncSession):
+    action = callback_data.action
+    period = 30
+    if action.startswith("stats_chartp_"):
+        try:
+            period = int(action.rsplit("_", 1)[1])
+        except ValueError:
+            period = 30
+    if period not in (7, 30, 90):
+        period = 30
+
+    await callback_query.answer()
+
+    try:
+        chart = await _build_stats_chart(session, period)
+        if chart is None:
+            await callback_query.message.answer("❗ Не удалось построить график.")
+            return
+
+        photo = BufferedInputFile(chart.getvalue(), filename="stats.png")
+        caption = (
+            f"📊 <b>Динамика за {period} дн.</b>\n"
+            "Сверху вниз: доход ₽, новые пользователи, новые подписки, продления"
+        )
+        kb = build_stats_charts_kb(period)
+        msg = callback_query.message
+        if msg.photo:
+            from aiogram.types import InputMediaPhoto
+
+            await msg.edit_media(InputMediaPhoto(media=photo, caption=caption), reply_markup=kb)
+        else:
+            await msg.answer_photo(photo=photo, caption=caption, reply_markup=kb)
+    except Exception as e:
+        logger.error(f"[Stats] Ошибка построения графиков: {e}")
 
 
 async def _build_audit_report(session: AsyncSession, source: str = "db") -> tuple[str | None, str | None]:
@@ -632,8 +719,8 @@ async def send_daily_stats_report(session: AsyncSession):
         chart = render_stats_chart(
             labels,
             [
-                {"name": "RUB / day", "color": (63, 185, 80), "values": revenue_series},
-                {"name": "New users / day", "color": (88, 166, 255), "values": [float(v) for v in users_series]},
+                {"name": "Доход, руб/день", "color": (63, 185, 80), "values": revenue_series},
+                {"name": "Новые пользователи/день", "color": (88, 166, 255), "values": [float(v) for v in users_series]},
             ],
         )
 
@@ -701,8 +788,8 @@ async def send_monthly_stats_report(session: AsyncSession):
         chart = render_stats_chart(
             labels,
             [
-                {"name": "RUB / day", "color": (63, 185, 80), "values": revenue_series},
-                {"name": "New users / day", "color": (88, 166, 255), "values": [float(v) for v in users_series]},
+                {"name": "Доход, руб/день", "color": (63, 185, 80), "values": revenue_series},
+                {"name": "Новые пользователи/день", "color": (88, 166, 255), "values": [float(v) for v in users_series]},
             ],
         )
 
