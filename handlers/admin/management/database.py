@@ -267,7 +267,7 @@ def sync_restore_from_path(
         if name.endswith(".tar.gz") or name.endswith(".tgz"):
             try:
                 with tarfile.open(src, "r:gz") as tar:
-                    tar.extractall(tmpdir)
+                    tar.extractall(tmpdir, filter="data")
             except Exception as e:
                 return False, f"Не удалось распаковать архив: {e}"
             extracted_root = Path(tmpdir)
