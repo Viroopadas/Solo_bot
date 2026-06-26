@@ -84,7 +84,14 @@ async def root():
 
 @router.get("/api/version", include_in_schema=True)
 async def version():
-    return {"version": 2, "api": "v2"}
+    bot_version = ""
+    try:
+        from utils.versioning import get_version
+
+        bot_version = get_version(include_git_info=False)
+    except Exception:
+        bot_version = ""
+    return {"version": 2, "api": "v2", "bot_version": bot_version}
 
 
 @router.get("/api/telegram-widget-bot", include_in_schema=True)

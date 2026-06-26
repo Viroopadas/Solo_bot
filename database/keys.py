@@ -484,7 +484,7 @@ async def delete_key(session: AsyncSession, identifier: int | str):
     logger.info(f"Ключ с идентификатором {identifier} удалён")
 
 
-async def update_key_expiry(session: AsyncSession, client_id: str, new_expiry_time: int):
+async def update_key_expiry(session: AsyncSession, client_id: str, new_expiry_time: int, record_event: bool = True):
     try:
         ctx = (await session.execute(
             select(Key.user_id, Key.tg_id, Key.tariff_id, Key.server_id).where(Key.client_id == client_id).limit(1)
@@ -494,6 +494,8 @@ async def update_key_expiry(session: AsyncSession, client_id: str, new_expiry_ti
     await session.execute(update(Key).where(Key.client_id == client_id).values(expiry_time=new_expiry_time))
     await invalidate_key_details_by_client_id(session, client_id)
     logger.info(f"Срок действия ключа {client_id} обновлён до {new_expiry_time}")
+    if not record_event:
+        return
     try:
         from database.subscription_events import record_subscription_event
 

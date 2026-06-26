@@ -38,12 +38,28 @@ from services.tariffs.cooldown import format_cooldown_left, get_tariff_cooldown_
 from services.tariffs.visibility import is_tariff_visible_for
 
 
+def _full_config_options(raw: object) -> list[int] | None:
+    """Все настроенные варианты для докупки в вебе."""
+    if not isinstance(raw, list):
+        return None
+    out: list[int] = []
+    for value in raw:
+        try:
+            out.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    out = sorted(set(out), key=lambda val: (int(val == 0), val))
+    return out or None
+
+
 def _tariff_to_public(t: Tariff) -> TariffPublic:
     dev_opts = getattr(t, "device_options", None)
     tr_opts = getattr(t, "traffic_options_gb", None)
     filtered_devices, filtered_traffic = filter_config_options(t)
     device_options = filtered_devices if isinstance(dev_opts, list) and filtered_devices else None
     traffic_options_gb = filtered_traffic if isinstance(tr_opts, list) and filtered_traffic else None
+    addon_device_options = _full_config_options(dev_opts)
+    addon_traffic_options = _full_config_options(tr_opts)
     return TariffPublic(
         id=t.id,
         name=t.name or "",
@@ -58,6 +74,8 @@ def _tariff_to_public(t: Tariff) -> TariffPublic:
         configurable=bool(getattr(t, "configurable", False)),
         device_options=device_options,
         traffic_options_gb=traffic_options_gb,
+        addon_device_options=addon_device_options,
+        addon_traffic_options=addon_traffic_options,
         cooldown_days=int(getattr(t, "cooldown_days", 0) or 0),
     )
 
