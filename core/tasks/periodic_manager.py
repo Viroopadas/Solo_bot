@@ -112,15 +112,33 @@ class PeriodicTaskManager:
         self._started = False
         self._lock = asyncio.Lock()
         self._process_lock_file = None
-        self._process_lock_path = "/tmp/solo_bot_periodic_manager.lock"
+        self._cached_instance_key: str | None = None
+        self._process_lock_path = os.path.join(tempfile.gettempdir(), "solo_bot_periodic_manager.lock")
+
+    def _instance_key(self) -> str:
+        if self._cached_instance_key is not None:
+            return self._cached_instance_key
+        import hashlib
+
+        parts: list[str] = []
+        try:
+            from config import API_TOKEN
+
+            parts.append(str(API_TOKEN or ""))
+        except Exception:
+            pass
+        parts.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+        raw = "|".join(part for part in parts if part) or "default"
+        self._cached_instance_key = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+        return self._cached_instance_key
 
     def _process_lock_candidates(self) -> list[str]:
-        candidates = [self._process_lock_path]
-        uid_suffix = f"solo_bot_periodic_manager_{os.getuid()}.lock"
+        filename = f"solo_bot_periodic_manager_{os.getuid()}_{self._instance_key()}.lock"
+        candidates: list[str] = []
         runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "").strip()
         if runtime_dir:
-            candidates.append(os.path.join(runtime_dir, uid_suffix))
-        candidates.append(os.path.join(tempfile.gettempdir(), uid_suffix))
+            candidates.append(os.path.join(runtime_dir, filename))
+        candidates.append(os.path.join(tempfile.gettempdir(), filename))
         unique_candidates: list[str] = []
         for candidate in candidates:
             if candidate not in unique_candidates:

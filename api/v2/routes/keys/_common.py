@@ -89,7 +89,7 @@ from services.operations import (
 )
 from services.operations.aggregated_links import make_aggregated_link
 from services.payments.payment_links import PaymentLinkRequest, create_payment_link
-from services.payments.providers import WEB_LINK_PROVIDER_IDS
+from services.payments.providers import get_web_link_provider_ids
 from services.tariffs import calculate_config_price
 from services.tariffs.tariff_display import GB, get_effective_limits_for_key, get_key_tariff_addons_state
 
@@ -294,10 +294,11 @@ def _resolve_public_base_url(request: Request) -> str:
 
 
 def _resolve_default_web_payment_provider() -> str | None:
-    for provider_id in WEB_LINK_PROVIDER_IDS:
+    ids = get_web_link_provider_ids()
+    for provider_id in ids:
         if bool(PAYMENTS_CONFIG.get(provider_id)):
             return provider_id
-    return WEB_LINK_PROVIDER_IDS[0] if WEB_LINK_PROVIDER_IDS else None
+    return ids[0] if ids else None
 
 
 def _normalize_expiry_ms(raw_value: int | float | None) -> int:

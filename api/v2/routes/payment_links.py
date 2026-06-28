@@ -167,6 +167,8 @@ async def create_link(
 ):
     """Создаёт платёжную ссылку для текущего авторизованного пользователя."""
     billing_user_ref = await idb.ensure_billing_user_for_identity(session, identity)
+    web_metadata = dict(body.metadata or {})
+    web_metadata.setdefault("payment_flow", "balance_topup")
     payment_request = PaymentLinkRequest(
         legacy_user_ref=billing_user_ref,
         amount=body.amount,
@@ -174,14 +176,14 @@ async def create_link(
         provider_id=body.provider_id,
         success_url=body.success_url,
         failure_url=body.failure_url,
-        metadata=body.metadata,
+        metadata=web_metadata,
     )
     result = await create_payment_link(session, payment_request)
     if result.success:
         await _store_payment_intent(
             session=session,
             billing_user_ref=billing_user_ref,
-            metadata=body.metadata,
+            metadata=web_metadata,
             amount=body.amount,
         )
     return PaymentLinkCreateResponse(

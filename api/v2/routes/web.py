@@ -441,13 +441,11 @@ async def _resolve_variant(
             raise HTTPException(404, "Вариант страницы не найден")
         return current, variants
     active = next((variant for variant in variants if variant.is_active), variants[0])
+    active_variants = [variant for variant in variants if variant.is_active]
     bucket = (ab_bucket or "").strip().lower()
-    if bucket and len(bucket) == 1 and bucket.isalpha() and len(variants) > 1:
+    if bucket and len(bucket) == 1 and bucket.isalpha() and len(active_variants) > 1:
         idx = ord(bucket) - ord("a")
-        if idx > 0:
-            others = [variant for variant in variants if not variant.is_active]
-            if others:
-                return others[min(idx - 1, len(others) - 1)], variants
+        return active_variants[idx % len(active_variants)], variants
     return active, variants
 
 
