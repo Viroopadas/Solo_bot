@@ -393,7 +393,7 @@ async def activate_trial(
     if not trial_tariffs:
         raise HTTPException(status_code=404, detail="Пробный тариф не найден")
 
-    tariff = trial_tariffs[0]
+    tariff = max(trial_tariffs, key=lambda t: int(t.get("id", 0) or 0))
     price = int(tariff.get("price_rub", 0) or 0)
     duration = int(tariff.get("duration_days") or 0)
     if duration <= 0:

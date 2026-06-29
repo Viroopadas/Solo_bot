@@ -159,7 +159,7 @@ def build_tariff_list_kb(tariffs: list[dict]) -> InlineKeyboardMarkup:
 
     grouped = defaultdict(list)
     for t in tariffs:
-        subgroup = t.get("subgroup_title")
+        subgroup = t.get("subgroup_title") or None
         grouped[subgroup].append(t)
 
     sorted_subgroups = sorted(
