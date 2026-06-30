@@ -231,7 +231,8 @@ async def bulk_unfreeze(session: AsyncSession, keys: list[Key]) -> tuple[int, in
                 fail += 1
                 continue
             traffic, device = await _key_limits(session, key)
-            new_expiry = now_ms + max(0, key.expiry_time)
+            stored_left = max(0, key.expiry_time)
+            new_expiry = stored_left if stored_left > now_ms else now_ms + stored_left
             await renew_key_in_cluster(
                 key.server_id,
                 email=key.email,

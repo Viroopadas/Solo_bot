@@ -80,6 +80,33 @@ def _apply_runtime_links(theme_tokens: dict) -> dict:
     return theme_tokens
 
 
+def _apply_support_links_to_pages(pages: dict) -> None:
+    try:
+        from config import SUPPORT_CHAT_URL, USERNAME_BOT
+    except Exception:
+        return
+    bot_url = f"https://t.me/{USERNAME_BOT}" if USERNAME_BOT else ""
+    support_url = SUPPORT_CHAT_URL or bot_url
+    if not support_url:
+        return
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            if obj.get("telegramUsername") == "solonet_sup":
+                obj["telegramUsername"] = None
+                obj["linkType"] = "url"
+                obj["href"] = support_url
+            if obj.get("href") == "https://t.me/solonet_sup":
+                obj["href"] = support_url
+            for value in obj.values():
+                walk(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item)
+
+    walk(pages)
+
+
 async def seed_default_site(session: AsyncSession, force: bool = False) -> bool:
     """Засевает дефолтный сайт. По умолчанию (force=False) — только в пустую БД
     (идемпотентно). При force=True перезаписывает страницы дефолта (кнопка
@@ -107,6 +134,7 @@ async def _apply_site(
     page_themes[slug] (если задан) переопределяет тему конкретной страницы — нужно
     для захваченных наборов, где у кабинета свои page-scoped токены."""
     page_themes = page_themes or {}
+    _apply_support_links_to_pages(pages)
     seeded = False
     for slug, blocks in pages.items():
         page_theme = page_themes.get(slug)

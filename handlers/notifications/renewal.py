@@ -66,6 +66,9 @@ async def try_auto_renew(ctx: NotificationContext, key) -> RenewalResult:
     if not current_tariff:
         return RenewalResult(RenewalStatus.NO_TARIFF)
 
+    if current_tariff.get("is_active") is False:
+        return RenewalResult(RenewalStatus.FORBIDDEN_TARIFF)
+
     forbidden = list(FORBIDDEN_GROUPS)
     try:
         hook_results = await run_hooks("renewal_forbidden_groups", chat_id=tg_id, admin=False, session=ctx.session)
