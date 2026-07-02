@@ -399,6 +399,42 @@ async def check_hot_lead_discount(session: AsyncSession, legacy_user_ref: int) -
     }
 
 
+async def check_cold_lead_discount(session: AsyncSession, legacy_user_ref: int) -> dict:
+    u = await resolve_user_optional(session, legacy_user_ref)
+    if u is None:
+        return {"available": False}
+    result = await session.execute(
+        select(Notification.notification_type, Notification.last_notification_time)
+        .where(Notification.user_id == u.id)
+        .where(Notification.notification_type.in_(["cold_lead_step_2", "cold_lead_step_3"]))
+        .order_by(Notification.last_notification_time.desc())
+        .limit(1)
+    )
+
+    row = result.first()
+    if not row:
+        return {"available": False}
+
+    notification_type, last_time = row
+
+    hours = int(NOTIFICATIONS_CONFIG.get("DISCOUNT_ACTIVE_HOURS", DISCOUNT_ACTIVE_HOURS))
+
+    expires_at = last_time + timedelta(hours=hours)
+    current_time = _utc_now()
+
+    if current_time > expires_at:
+        return {"available": False}
+
+    tariff_group = "cold_discounts" if notification_type == "cold_lead_step_2" else "cold_discounts_max"
+
+    return {
+        "available": True,
+        "type": notification_type,
+        "tariff_group": tariff_group,
+        "expires_at": expires_at,
+    }
+
+
 _BULK_NOTIFICATION_BATCH_SIZE = 250
 
 

@@ -27,7 +27,7 @@ from database import (
 )
 from database.access.resolution import notify_telegram_chat_id
 from database.models import Admin
-from database.notifications import check_hot_lead_discount
+from database.notifications import check_cold_lead_discount, check_hot_lead_discount
 from database.tariffs import create_subgroup_hash, find_subgroup_by_hash, get_subgroup_description, get_tariffs
 from database.users import get_balance
 from handlers.admin.panel.keyboard import AdminPanelCallback
@@ -207,6 +207,10 @@ async def handle_key_creation(
             original_group_code = group_code
             if group_code:
                 discount_info = await check_hot_lead_discount(session, tg_id)
+                if not (discount_info and discount_info.get("available")):
+                    cold_discount_info = await check_cold_lead_discount(session, tg_id)
+                    if cold_discount_info and cold_discount_info.get("available"):
+                        discount_info = cold_discount_info
 
                 if discount_info and discount_info.get("available"):
                     group_code = discount_info["tariff_group"]

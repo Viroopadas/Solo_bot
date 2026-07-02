@@ -29,7 +29,7 @@ from database import (
 )
 from database.access.resolution import notify_telegram_chat_id
 from database.models import Key, Server
-from database.notifications import check_hot_lead_discount
+from database.notifications import check_cold_lead_discount, check_hot_lead_discount
 from database.tariffs import create_subgroup_hash, find_subgroup_by_hash, get_subgroup_description, get_tariffs
 from handlers.buttons import BACK, MAIN_MENU, MY_SUB, PAYMENT
 from handlers.payments.fast_payment_flow import try_fast_payment_flow
@@ -166,7 +166,7 @@ async def process_callback_renew_key(callback_query: CallbackQuery, state: FSMCo
             if await check_tariff_exists(session, tariff_id):
                 current_tariff = await get_tariff_by_id(session, tariff_id)
 
-                forbidden_groups = ["discounts", "discounts_max", "gifts", "trial"]
+                forbidden_groups = ["discounts", "discounts_max", "cold_discounts", "cold_discounts_max", "gifts", "trial"]
                 additional_groups = await process_renewal_forbidden_groups(chat_id=tg_id, admin=False, session=session)
                 forbidden_groups.extend(additional_groups)
 
@@ -175,6 +175,10 @@ async def process_callback_renew_key(callback_query: CallbackQuery, state: FSMCo
                     original_group_code = group_code
 
         discount_info = await check_hot_lead_discount(session, tg_id)
+        if not discount_info.get("available"):
+            cold_discount_info = await check_cold_lead_discount(session, tg_id)
+            if cold_discount_info.get("available"):
+                discount_info = cold_discount_info
 
         if discount_info.get("available"):
             group_code = discount_info["tariff_group"]
@@ -344,7 +348,7 @@ async def show_tariffs_in_renew_subgroup(callback: CallbackQuery, state: FSMCont
             if await check_tariff_exists(session, tariff_id):
                 current_tariff = await get_tariff_by_id(session, tariff_id)
 
-                forbidden_groups = ["discounts", "discounts_max", "gifts", "trial"]
+                forbidden_groups = ["discounts", "discounts_max", "cold_discounts", "cold_discounts_max", "gifts", "trial"]
                 additional_groups = await process_renewal_forbidden_groups(
                     chat_id=callback.from_user.id, admin=False, session=session
                 )
@@ -357,6 +361,10 @@ async def show_tariffs_in_renew_subgroup(callback: CallbackQuery, state: FSMCont
         tg_id = callback.from_user.id
         language_code = callback.from_user.language_code
         discount_info = await check_hot_lead_discount(session, tg_id)
+        if not discount_info.get("available"):
+            cold_discount_info = await check_cold_lead_discount(session, tg_id)
+            if cold_discount_info.get("available"):
+                discount_info = cold_discount_info
 
         if discount_info.get("available"):
             group_code = discount_info["tariff_group"]
@@ -473,6 +481,16 @@ async def process_callback_renew_plan(callback_query: CallbackQuery, state: FSMC
         discount_info = await check_hot_lead_discount(session, tg_id)
         if tariff.get("group_code") in ["discounts", "discounts_max"]:
             if not discount_info.get("available") or datetime.now(timezone.utc) >= discount_info["expires_at"]:
+                builder = InlineKeyboardBuilder()
+                builder.row(InlineKeyboardButton(text=MAIN_MENU, callback_data="profile"))
+                await callback_query.message.answer(
+                    "❌ Скидка недоступна или истекла. Пожалуйста, выберите тариф заново.",
+                    reply_markup=builder.as_markup(),
+                )
+                return
+        elif tariff.get("group_code") in ["cold_discounts", "cold_discounts_max"]:
+            cold_discount_info = await check_cold_lead_discount(session, tg_id)
+            if not cold_discount_info.get("available") or datetime.now(timezone.utc) >= cold_discount_info["expires_at"]:
                 builder = InlineKeyboardBuilder()
                 builder.row(InlineKeyboardButton(text=MAIN_MENU, callback_data="profile"))
                 await callback_query.message.answer(
