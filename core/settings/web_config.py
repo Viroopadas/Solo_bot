@@ -80,3 +80,7 @@ def is_web_enabled() -> bool:
 
 def is_email_binding_enabled() -> bool:
     return bool(WEB_CONFIG.get("EMAIL_BINDING_ENABLED", False))
+
+
+def is_web_open_in_browser() -> bool:
+    return bool(WEB_CONFIG.get("WEB_OPEN_IN_BROWSER", False))

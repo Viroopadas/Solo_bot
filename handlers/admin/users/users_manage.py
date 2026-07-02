@@ -653,7 +653,7 @@ async def handle_users_site_send(callback: CallbackQuery, callback_data: AdminUs
         await callback.answer("Неизвестная вкладка", show_alert=True)
         return
 
-    from core.settings.web_config import get_site_url, is_web_enabled
+    from core.settings.web_config import get_site_url, is_web_enabled, is_web_open_in_browser
 
     if not is_web_enabled():
         await callback.answer("Веб-кабинет отключён", show_alert=True)
@@ -664,12 +664,14 @@ async def handle_users_site_send(callback: CallbackQuery, callback_data: AdminUs
         return
 
     builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(
+    if is_web_open_in_browser():
+        button = InlineKeyboardButton(text=f"🌐 {label}", url=f"{site_url}/dashboard?tab={tab}")
+    else:
+        button = InlineKeyboardButton(
             text=f"🌐 {label}",
             web_app=WebAppInfo(url=f"{site_url}/dashboard?tab={tab}&webapp=1"),
         )
-    )
+    builder.row(button)
 
     from bot import bot
 

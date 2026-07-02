@@ -35,6 +35,13 @@ def build_settings_web_kb() -> InlineKeyboardBuilder:
             callback_data=AdminPanelCallback(action="settings_web_url").pack(),
         )
     )
+    open_in_browser = bool(WEB_CONFIG.get("WEB_OPEN_IN_BROWSER", False))
+    builder.row(
+        InlineKeyboardButton(
+            text=f"🔗 Открытие: {'в браузере' if open_in_browser else 'в веб-аппе'}",
+            callback_data=AdminPanelCallback(action="settings_web_open_mode_toggle").pack(),
+        )
+    )
     email_binding = bool(WEB_CONFIG.get("EMAIL_BINDING_ENABLED", False))
     builder.row(
         InlineKeyboardButton(
@@ -57,13 +64,17 @@ def _web_settings_text() -> str:
     enabled = bool(WEB_CONFIG.get("WEB_ENABLED", False))
     url = str(WEB_CONFIG.get("SITE_URL") or "не указан")
     email_binding = bool(WEB_CONFIG.get("EMAIL_BINDING_ENABLED", False))
+    open_in_browser = bool(WEB_CONFIG.get("WEB_OPEN_IN_BROWSER", False))
     return (
         "<b>🌐 Настройки веб-сайта</b>\n\n"
         f"Статус: {'✅ Включён' if enabled else '❌ Выключен'}\n"
         f"URL: <code>{url}</code>\n"
+        f"Открытие: {'🔗 в браузере' if open_in_browser else '📱 в веб-аппе'}\n"
         f"Привязка почты: {'✅ Включена' if email_binding else '❌ Выключена'}\n\n"
         "Сайт может работать на отдельном домене и сервере.\n"
         "При выключении кнопка «Личный кабинет» скрывается из бота.\n"
+        "Открытие «в веб-аппе» — кабинет открывается внутри Telegram, "
+        "«в браузере» — обычной ссылкой во внешнем браузере.\n"
         "Привязка почты — кнопка в боте, через которую пользователь указывает email "
         "для входа на сайт на случай проблем с Telegram."
     )
@@ -88,6 +99,23 @@ async def toggle_web_enabled(callback: CallbackQuery) -> None:
         await update_web_config(session, new_config)
 
     status = "✅ Сайт включён" if new_config["WEB_ENABLED"] else "❌ Сайт выключен"
+    await callback.answer(status, show_alert=True)
+    await callback.message.edit_text(
+        text=_web_settings_text(),
+        reply_markup=build_settings_web_kb().as_markup(),
+    )
+
+
+@router.callback_query(AdminPanelCallback.filter(F.action == "settings_web_open_mode_toggle"))
+async def toggle_web_open_mode(callback: CallbackQuery) -> None:
+    current = bool(WEB_CONFIG.get("WEB_OPEN_IN_BROWSER", False))
+    new_config = dict(WEB_CONFIG)
+    new_config["WEB_OPEN_IN_BROWSER"] = not current
+
+    async with async_session_maker() as session:
+        await update_web_config(session, new_config)
+
+    status = "🔗 Сайт открывается в браузере" if new_config["WEB_OPEN_IN_BROWSER"] else "📱 Сайт открывается в веб-аппе"
     await callback.answer(status, show_alert=True)
     await callback.message.edit_text(
         text=_web_settings_text(),
