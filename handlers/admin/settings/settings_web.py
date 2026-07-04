@@ -16,6 +16,14 @@ router = Router(name="admin_settings_web")
 
 class WebSettingsState(StatesGroup):
     waiting_for_url = State()
+    waiting_for_node_status_interval = State()
+
+
+def _node_status_interval_min() -> int:
+    try:
+        return max(1, int(WEB_CONFIG.get("WEB_NODE_STATUS_INTERVAL_MIN") or 1))
+    except (TypeError, ValueError):
+        return 1
 
 
 def build_settings_web_kb() -> InlineKeyboardBuilder:
@@ -40,6 +48,12 @@ def build_settings_web_kb() -> InlineKeyboardBuilder:
         InlineKeyboardButton(
             text=f"🔗 Открытие: {'в браузере' if open_in_browser else 'в веб-аппе'}",
             callback_data=AdminPanelCallback(action="settings_web_open_mode_toggle").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=f"⏱ Статус серверов: раз в {_node_status_interval_min()} мин",
+            callback_data=AdminPanelCallback(action="settings_web_node_interval").pack(),
         )
     )
     email_binding = bool(WEB_CONFIG.get("EMAIL_BINDING_ENABLED", False))
@@ -70,6 +84,7 @@ def _web_settings_text() -> str:
         f"Статус: {'✅ Включён' if enabled else '❌ Выключен'}\n"
         f"URL: <code>{url}</code>\n"
         f"Открытие: {'🔗 в браузере' if open_in_browser else '📱 в веб-аппе'}\n"
+        f"Статус серверов: раз в {_node_status_interval_min()} мин\n"
         f"Привязка почты: {'✅ Включена' if email_binding else '❌ Выключена'}\n\n"
         "Сайт может работать на отдельном домене и сервере.\n"
         "При выключении кнопка «Личный кабинет» скрывается из бота.\n"
@@ -153,6 +168,44 @@ async def prompt_web_url(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.message.edit_text(text=text)
     await state.set_state(WebSettingsState.waiting_for_url)
     await callback.answer()
+
+
+@router.callback_query(AdminPanelCallback.filter(F.action == "settings_web_node_interval"))
+async def prompt_node_status_interval(callback: CallbackQuery, state: FSMContext) -> None:
+    text = (
+        "<b>⏱ Интервал обновления статуса серверов</b>\n\n"
+        f"Текущий: раз в <b>{_node_status_interval_min()} мин</b>\n\n"
+        "Как часто сайт актуализирует список серверов и их состояние из панели.\n"
+        "Отправьте число минут (от 1 до 60)."
+    )
+    await callback.message.edit_text(text=text)
+    await state.set_state(WebSettingsState.waiting_for_node_status_interval)
+    await callback.answer()
+
+
+@router.message(WebSettingsState.waiting_for_node_status_interval)
+async def set_node_status_interval(message: Message, state: FSMContext) -> None:
+    raw = (message.text or "").strip()
+    try:
+        minutes = int(raw)
+    except ValueError:
+        await message.answer("❌ Отправьте целое число минут (от 1 до 60)")
+        return
+    if not 1 <= minutes <= 60:
+        await message.answer("❌ Интервал должен быть от 1 до 60 минут")
+        return
+
+    new_config = dict(WEB_CONFIG)
+    new_config["WEB_NODE_STATUS_INTERVAL_MIN"] = minutes
+
+    async with async_session_maker() as session:
+        await update_web_config(session, new_config)
+
+    await state.clear()
+    await message.answer(
+        text=_web_settings_text(),
+        reply_markup=build_settings_web_kb().as_markup(),
+    )
 
 
 @router.callback_query(AdminPanelCallback.filter(F.action == "settings_web_reset_ask"))

@@ -544,8 +544,16 @@ async def render_user_config_screen(
         if has_traffic_choice:
             builder.row(*_stepper_row(traffic_int_options, selected_traffic_gb, "cfg_user_traffic", _traf_label))
     else:
-        device_buttons = _option_buttons(device_int_options, selected_devices, "cfg_user_devices", _dev_label) if has_device_choice else []
-        traffic_buttons = _option_buttons(traffic_int_options, selected_traffic_gb, "cfg_user_traffic", _traf_label) if has_traffic_choice else []
+        device_buttons = (
+            _option_buttons(device_int_options, selected_devices, "cfg_user_devices", _dev_label)
+            if has_device_choice
+            else []
+        )
+        traffic_buttons = (
+            _option_buttons(traffic_int_options, selected_traffic_gb, "cfg_user_traffic", _traf_label)
+            if has_traffic_choice
+            else []
+        )
         if device_buttons and traffic_buttons:
             for i in range(max(len(device_buttons), len(traffic_buttons))):
                 row = []
@@ -832,7 +840,9 @@ async def select_tariff_plan(callback_query: CallbackQuery, session: Any, state:
             reply_markup=builder.as_markup(),
         )
         await safe_answer_callback(callback_query)
-        logger.info(f"[TARIFF_CFG] select_tariff_plan cooldown_block: tg_id={tg_id} tariff_id={tariff_id} left={cooldown_left}s")
+        logger.info(
+            f"[TARIFF_CFG] select_tariff_plan cooldown_block: tg_id={tg_id} tariff_id={tariff_id} left={cooldown_left}s"
+        )
         return
 
     discount_info = await check_hot_lead_discount(session, tg_id)

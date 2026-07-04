@@ -14,6 +14,7 @@ from handlers.notifications.sender import send_messages_with_limit
 from handlers.texts import RETURNING_MESSAGE
 from logger import logger
 
+
 _DEFAULT_MIN_DAYS = 60
 _DEFAULT_MAX_DAYS = 180
 _USER_ID_BATCH_SIZE = 5000
@@ -49,14 +50,13 @@ async def process_returning(bot: Bot, session: AsyncSession):
             return
 
         await bulk_add_notifications(
-            session, [(uid, RETURNING_NOTIFICATION_TYPE) for uid in deliverable], commit=True,
+            session,
+            [(uid, RETURNING_NOTIFICATION_TYPE) for uid in deliverable],
+            commit=True,
         )
 
         keyboard = build_cold_lead_kb()
-        outbound = [
-            {"tg_id": chat_ids[uid], "text": RETURNING_MESSAGE, "keyboard": keyboard}
-            for uid in deliverable
-        ]
+        outbound = [{"tg_id": chat_ids[uid], "text": RETURNING_MESSAGE, "keyboard": keyboard} for uid in deliverable]
         results = await send_messages_with_limit(bot, outbound, messages_per_second=_MESSAGES_PER_SECOND)
         notified = sum(1 for r in results if r)
 

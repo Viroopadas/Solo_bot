@@ -51,7 +51,12 @@ from services.tariffs.visibility import filter_visible_tariffs
 
 from .key_mode.key_cluster_mode import key_cluster_mode
 from .key_mode.key_country_mode import key_country_mode
-from .utils import add_tariff_button_generic, format_subgroup_description, format_tariff_descriptions, order_tariff_items
+from .utils import (
+    add_tariff_button_generic,
+    format_subgroup_description,
+    format_tariff_descriptions,
+    order_tariff_items,
+)
 
 
 router = Router()
@@ -200,7 +205,6 @@ async def handle_key_creation(
         tariffs = await get_tariffs_for_cluster(session, cluster_name)
 
         discount_info: dict[str, Any] | None = None
-        subgroup_weights: dict[str, int] = {}
 
         if tariffs:
             group_code = tariffs[0].get("group_code")
@@ -238,7 +242,7 @@ async def handle_key_creation(
                 tariffs = await filter_visible_tariffs(
                     session, tg_id, [t for t in tariffs_data["tariffs"] if t.get("is_active")]
                 )
-                subgroup_weights = tariffs_data["subgroup_weights"]
+                tariffs_data["subgroup_weights"]
 
                 if not tariffs and discount_info and discount_info.get("available"):
                     logger.warning(f"[PURCHASE] Нет тарифов со скидкой {group_code}, fallback на {original_group_code}")
@@ -251,7 +255,7 @@ async def handle_key_creation(
                     tariffs = await filter_visible_tariffs(
                         session, tg_id, [t for t in tariffs_data["tariffs"] if t.get("is_active")]
                     )
-                    subgroup_weights = tariffs_data["subgroup_weights"]
+                    tariffs_data["subgroup_weights"]
                     discount_info = None
                     await state.update_data(discount_info=None)
 
@@ -424,7 +428,10 @@ async def show_tariffs_in_subgroup_user(callback: CallbackQuery, state: FSMConte
     sub_desc = await get_subgroup_description(session, group_code, subgroup)
     await edit_or_send_message(
         target_message=callback.message,
-        text=f"<b>{subgroup}</b>\n\n" + format_subgroup_description(sub_desc) + "Выберите тариф:" + format_tariff_descriptions(filtered),
+        text=f"<b>{subgroup}</b>\n\n"
+        + format_subgroup_description(sub_desc)
+        + "Выберите тариф:"
+        + format_tariff_descriptions(filtered),
         reply_markup=builder.as_markup(),
     )
 
@@ -490,7 +497,10 @@ async def back_to_subgroup_tariffs(callback: CallbackQuery, state: FSMContext, s
     sub_desc = await get_subgroup_description(session, group_code, subgroup)
     await edit_or_send_message(
         target_message=callback.message,
-        text=f"<b>{subgroup}</b>\n\n" + format_subgroup_description(sub_desc) + "Выберите тариф:" + format_tariff_descriptions(filtered),
+        text=f"<b>{subgroup}</b>\n\n"
+        + format_subgroup_description(sub_desc)
+        + "Выберите тариф:"
+        + format_tariff_descriptions(filtered),
         reply_markup=builder.as_markup(),
     )
     await callback.answer()

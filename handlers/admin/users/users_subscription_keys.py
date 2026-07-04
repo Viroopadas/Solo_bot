@@ -171,9 +171,7 @@ async def handle_hosts_list(
 
     key_obj = await resolve_admin_key(session, tg_id, key_ref)
     if not key_obj:
-        logger.warning(
-            f"[subscription_keys] resolve_admin_key вернул None: tg_id={tg_id}, key_ref='{key_ref}'"
-        )
+        logger.warning(f"[subscription_keys] resolve_admin_key вернул None: tg_id={tg_id}, key_ref='{key_ref}'")
         await _safe_edit(callback_query, ERR_KEY_NOT_FOUND, _back_to_key_edit_kb(tg_id, key_ref))
         return
 
@@ -201,14 +199,11 @@ async def handle_hosts_list(
     total_pages = max(1, (total + HOSTS_PER_PAGE - 1) // HOSTS_PER_PAGE)
     page = max(0, min(page, total_pages - 1))
 
-    text = (
-        f"{TITLE_HOSTS}\n"
-        + TEXT_HOSTS_INFO.format(
-            username=html_escape(key_obj.email),
-            total=total,
-            page=page + 1,
-            total_pages=total_pages,
-        )
+    text = f"{TITLE_HOSTS}\n" + TEXT_HOSTS_INFO.format(
+        username=html_escape(key_obj.email),
+        total=total,
+        page=page + 1,
+        total_pages=total_pages,
     )
 
     await _safe_edit(callback_query, text, _build_hosts_kb(tg_id, key_ref, links, page))

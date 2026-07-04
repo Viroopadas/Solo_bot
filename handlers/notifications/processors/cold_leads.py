@@ -14,6 +14,7 @@ from handlers.notifications.sender import send_messages_with_limit
 from handlers.texts import COLD_LEAD_FINAL_MESSAGE, COLD_LEAD_MESSAGE
 from logger import logger
 
+
 _DEFAULT_INTERVAL_HOURS = 48
 _USER_ID_BATCH_SIZE = 5000
 _MESSAGES_PER_SECOND = 30
@@ -57,10 +58,14 @@ async def process_cold_leads(bot: Bot, session: AsyncSession):
 
         flags = await get_cold_lead_notification_flags(session, leads)
         can_send_step2 = await check_notification_time_bulk(
-            session, [(tid, "cold_lead_step_1") for tid in leads], interval,
+            session,
+            [(tid, "cold_lead_step_1") for tid in leads],
+            interval,
         )
         can_send_step3 = await check_notification_time_bulk(
-            session, [(tid, "cold_lead_step_2") for tid in leads], interval,
+            session,
+            [(tid, "cold_lead_step_2") for tid in leads],
+            interval,
         )
 
         step1_to_add: list[int] = []
@@ -98,7 +103,9 @@ async def process_cold_leads(bot: Bot, session: AsyncSession):
 
         if step1_to_add:
             await bulk_add_notifications(
-                session, [(uid, "cold_lead_step_1") for uid in step1_to_add], commit=True,
+                session,
+                [(uid, "cold_lead_step_1") for uid in step1_to_add],
+                commit=True,
             )
             logger.info(f"[ColdLeads] Шаг 1 зафиксирован: {len(step1_to_add)}")
 
@@ -106,13 +113,17 @@ async def process_cold_leads(bot: Bot, session: AsyncSession):
 
         if step2_messages:
             await bulk_add_notifications(
-                session, [(m["user_id"], "cold_lead_step_2") for m in step2_messages], commit=True,
+                session,
+                [(m["user_id"], "cold_lead_step_2") for m in step2_messages],
+                commit=True,
             )
             notified += await _bulk_send(bot, session, step2_messages)
 
         if step3_messages:
             await bulk_add_notifications(
-                session, [(m["user_id"], "cold_lead_step_3") for m in step3_messages], commit=True,
+                session,
+                [(m["user_id"], "cold_lead_step_3") for m in step3_messages],
+                commit=True,
             )
             notified += await _bulk_send(bot, session, step3_messages)
 

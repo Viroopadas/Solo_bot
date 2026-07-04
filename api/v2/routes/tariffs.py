@@ -17,8 +17,8 @@ from api.v2.schemas.web_public import (
     TariffPurchaseRequest,
     TariffPurchaseResponse,
 )
-from core.bootstrap import MODES_CONFIG, PAYMENTS_CONFIG
 from config import TRIAL_TIME_DISABLE
+from core.bootstrap import MODES_CONFIG, PAYMENTS_CONFIG
 from core.redis_cache import cache_get, cache_key, cache_set
 from database import (
     get_balance,
@@ -30,6 +30,7 @@ from database.tariffs import get_tariff_by_id
 from database.temporary_data import create_temporary_data
 from handlers.texts import TARIFF_COOLDOWN_MESSAGE
 from logger import logger
+from services.errors import InsufficientFundsError
 from services.keys import create_vpn_key_headless
 from services.payments.payment_links import PaymentLinkRequest, create_payment_link
 from services.payments.providers import get_web_link_provider_ids
@@ -177,9 +178,7 @@ async def get_tariffs_public(
         q = q.where(Tariff.group_code == group_code)
     else:
         allowed_groups_subq = (
-            select(Server.tariff_group)
-            .where(Server.enabled.is_(True), Server.tariff_group.isnot(None))
-            .distinct()
+            select(Server.tariff_group).where(Server.enabled.is_(True), Server.tariff_group.isnot(None)).distinct()
         )
         q = q.where(Tariff.group_code.in_(allowed_groups_subq))
     if filter_vless == "router":
@@ -228,9 +227,7 @@ async def purchase_tariff_with_balance(
     if not tariff_group_code:
         raise HTTPException(status_code=404, detail="Тариф не найден")
     tariff_is_purchasable = await session.scalar(
-        select(Server.id)
-        .where(Server.tariff_group == tariff_group_code, Server.enabled.is_(True))
-        .limit(1)
+        select(Server.id).where(Server.tariff_group == tariff_group_code, Server.enabled.is_(True)).limit(1)
     )
     if not tariff_is_purchasable:
         raise HTTPException(status_code=404, detail="Тариф не найден")
@@ -352,6 +349,8 @@ async def purchase_tariff_with_balance(
         )
         if coupon_id is not None:
             await mark_coupon_used(session, int(coupon_id), int(tg_id))
+    except InsufficientFundsError:
+        raise HTTPException(status_code=402, detail="Недостаточно средств на балансе") from None
     except Exception:
         logger.exception("web tariff purchase failed")
         raise HTTPException(status_code=500, detail="Не удалось оформить подписку") from None
@@ -440,6 +439,8 @@ async def activate_trial(
                 is_trial=True,
             )
             await update_trial(session, tg_id, 1)
+        except InsufficientFundsError:
+            raise HTTPException(status_code=402, detail="Недостаточно средств на балансе") from None
         except Exception:
             logger.exception("web paid trial activation failed")
             raise HTTPException(status_code=500, detail="Ошибка активации триала") from None

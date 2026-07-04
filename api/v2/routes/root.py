@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.depends import get_session
-
 from config import (
     BALANCE_BUTTON,
     CAPTCHA_ENABLE,
@@ -106,6 +105,7 @@ async def telegram_widget_bot():
     telegram_client_id = ""
     try:
         from config import TELEGRAM_CLIENT_ID
+
         telegram_client_id = str(TELEGRAM_CLIENT_ID).strip()
     except ImportError:
         pass

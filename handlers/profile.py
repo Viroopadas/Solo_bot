@@ -124,9 +124,7 @@ async def process_callback_view_profile(
                 builder.row(InlineKeyboardButton(text=WEB_CABINET, url=f"{site_url}/dashboard"))
             else:
                 builder.row(
-                    InlineKeyboardButton(
-                        text=WEB_CABINET, web_app=WebAppInfo(url=f"{site_url}/dashboard?webapp=1")
-                    )
+                    InlineKeyboardButton(text=WEB_CABINET, web_app=WebAppInfo(url=f"{site_url}/dashboard?webapp=1"))
                 )
 
     if is_email_binding_enabled():

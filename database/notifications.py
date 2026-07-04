@@ -38,9 +38,7 @@ async def _map_legacy_refs_to_user_ids(session: AsyncSession, refs: list[int]) -
     m: dict[int, int] = {}
     for i in range(0, len(uniq), _LEGACY_REF_MAP_BATCH_SIZE):
         chunk = uniq[i : i + _LEGACY_REF_MAP_BATCH_SIZE]
-        r = await session.execute(
-            select(User.id, User.tg_id).where(or_(User.tg_id.in_(chunk), User.id.in_(chunk)))
-        )
+        r = await session.execute(select(User.id, User.tg_id).where(or_(User.tg_id.in_(chunk), User.id.in_(chunk))))
         for uid, tgid in r.all():
             m[int(uid)] = int(uid)
             if tgid is not None:
@@ -317,9 +315,7 @@ _COLD_LEAD_NOTIFICATION_TYPES = (
 )
 
 
-async def get_hot_lead_notification_flags(
-    session: AsyncSession, legacy_user_refs: list[int]
-) -> dict[int, set[str]]:
+async def get_hot_lead_notification_flags(session: AsyncSession, legacy_user_refs: list[int]) -> dict[int, set[str]]:
     """
     Один запрос: для каждого legacy_user_ref (tg_id или user_id) возвращает множество
     типов уведомлений hot_lead_*, которые у пользователя уже есть.
@@ -342,9 +338,7 @@ async def get_hot_lead_notification_flags(
     return dict(out)
 
 
-async def get_cold_lead_notification_flags(
-    session: AsyncSession, legacy_user_refs: list[int]
-) -> dict[int, set[str]]:
+async def get_cold_lead_notification_flags(session: AsyncSession, legacy_user_refs: list[int]) -> dict[int, set[str]]:
     if not legacy_user_refs:
         return {}
     id_map = await _map_legacy_refs_to_user_ids(session, legacy_user_refs)

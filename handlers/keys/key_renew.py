@@ -166,7 +166,14 @@ async def process_callback_renew_key(callback_query: CallbackQuery, state: FSMCo
             if await check_tariff_exists(session, tariff_id):
                 current_tariff = await get_tariff_by_id(session, tariff_id)
 
-                forbidden_groups = ["discounts", "discounts_max", "cold_discounts", "cold_discounts_max", "gifts", "trial"]
+                forbidden_groups = [
+                    "discounts",
+                    "discounts_max",
+                    "cold_discounts",
+                    "cold_discounts_max",
+                    "gifts",
+                    "trial",
+                ]
                 additional_groups = await process_renewal_forbidden_groups(chat_id=tg_id, admin=False, session=session)
                 forbidden_groups.extend(additional_groups)
 
@@ -192,14 +199,14 @@ async def process_callback_renew_key(callback_query: CallbackQuery, state: FSMCo
 
         tariffs_data = await get_tariffs(session, group_code=group_code, with_subgroup_weights=True)
         tariffs = [t for t in tariffs_data["tariffs"] if t.get("is_active")]
-        subgroup_weights = tariffs_data["subgroup_weights"]
+        tariffs_data["subgroup_weights"]
 
         if not tariffs and discount_info.get("available"):
             logger.warning(f"[RENEW] Нет тарифов со скидкой {group_code}, fallback на {original_group_code}")
             group_code = original_group_code
             tariffs_data = await get_tariffs(session, group_code=group_code, with_subgroup_weights=True)
             tariffs = [t for t in tariffs_data["tariffs"] if t.get("is_active")]
-            subgroup_weights = tariffs_data["subgroup_weights"]
+            tariffs_data["subgroup_weights"]
             discount_info = {"available": False}
 
         if not tariffs:
@@ -348,7 +355,14 @@ async def show_tariffs_in_renew_subgroup(callback: CallbackQuery, state: FSMCont
             if await check_tariff_exists(session, tariff_id):
                 current_tariff = await get_tariff_by_id(session, tariff_id)
 
-                forbidden_groups = ["discounts", "discounts_max", "cold_discounts", "cold_discounts_max", "gifts", "trial"]
+                forbidden_groups = [
+                    "discounts",
+                    "discounts_max",
+                    "cold_discounts",
+                    "cold_discounts_max",
+                    "gifts",
+                    "trial",
+                ]
                 additional_groups = await process_renewal_forbidden_groups(
                     chat_id=callback.from_user.id, admin=False, session=session
                 )
@@ -490,7 +504,10 @@ async def process_callback_renew_plan(callback_query: CallbackQuery, state: FSMC
                 return
         elif tariff.get("group_code") in ["cold_discounts", "cold_discounts_max"]:
             cold_discount_info = await check_cold_lead_discount(session, tg_id)
-            if not cold_discount_info.get("available") or datetime.now(timezone.utc) >= cold_discount_info["expires_at"]:
+            if (
+                not cold_discount_info.get("available")
+                or datetime.now(timezone.utc) >= cold_discount_info["expires_at"]
+            ):
                 builder = InlineKeyboardBuilder()
                 builder.row(InlineKeyboardButton(text=MAIN_MENU, callback_data="profile"))
                 await callback_query.message.answer(
@@ -1097,21 +1114,24 @@ async def complete_key_renewal(
         except ServiceError as e:
             logger.error(f"[Error] Сервис продления: {e.message}")
             err_text = f"⚠️ {e.message}"
+            err_kb = InlineKeyboardBuilder()
+            err_kb.row(InlineKeyboardButton(text=MAIN_MENU, callback_data="profile"))
+            err_markup = err_kb.as_markup()
             try:
                 if callback_query:
                     await edit_or_send_message(
                         target_message=callback_query.message,
                         text=err_text,
-                        reply_markup=None,
+                        reply_markup=err_markup,
                     )
                 elif waiting_message:
                     await edit_or_send_message(
                         target_message=waiting_message,
                         text=err_text,
-                        reply_markup=None,
+                        reply_markup=err_markup,
                     )
                 elif tg_notify is not None:
-                    await bot.send_message(tg_notify, err_text)
+                    await bot.send_message(tg_notify, err_text, reply_markup=err_markup)
             except Exception as notify_err:
                 logger.warning(f"[Renew] Не удалось показать ошибку продления: {notify_err}")
             return

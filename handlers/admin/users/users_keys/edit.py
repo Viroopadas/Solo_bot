@@ -1,6 +1,8 @@
-from ._common import *  # noqa: F401,F403
 from database.subscription_events import get_recent_renewals
 from services.subscription_keys import resolve_remnawave_server_ref
+
+from ._common import *  # noqa: F401,F403
+
 
 _RENEWAL_SOURCE_LABELS = {"bot": "бот", "web": "сайт", "webapp": "WebApp", "admin": "админ", "balance": "баланс"}
 

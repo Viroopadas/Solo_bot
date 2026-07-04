@@ -727,6 +727,5 @@ async def toggle_tariff_configurable(callback: CallbackQuery, session: AsyncSess
     tariff.configurable = not current
     tariff.updated_at = datetime.utcnow()
 
-
     text, markup = render_tariff_card(tariff)
     await callback.message.edit_text(text=text, reply_markup=markup)

@@ -117,16 +117,14 @@ async def user_key_devices(
     for device in devices:
         if not isinstance(device, dict):
             continue
-        normalized.append(
-            {
-                "hwid": str(device.get("hwid") or ""),
-                "device_model": str(device.get("deviceModel") or device.get("device_model") or ""),
-                "platform": str(device.get("platform") or ""),
-                "os_version": str(device.get("osVersion") or device.get("os_version") or ""),
-                "user_agent": str(device.get("userAgent") or device.get("user_agent") or ""),
-                "created_at": str(device.get("createdAt") or device.get("created_at") or ""),
-            }
-        )
+        normalized.append({
+            "hwid": str(device.get("hwid") or ""),
+            "device_model": str(device.get("deviceModel") or device.get("device_model") or ""),
+            "platform": str(device.get("platform") or ""),
+            "os_version": str(device.get("osVersion") or device.get("os_version") or ""),
+            "user_agent": str(device.get("userAgent") or device.get("user_agent") or ""),
+            "created_at": str(device.get("createdAt") or device.get("created_at") or ""),
+        })
     return {"devices": normalized, "total": len(normalized)}
 
 

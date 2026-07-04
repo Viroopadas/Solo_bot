@@ -7,6 +7,7 @@ from database import get_servers
 from logger import logger
 from panels.remnawave_runtime import with_remnawave_api
 
+
 HOSTS_PER_PAGE = 20
 LINKS_CACHE_TTL_SEC = 150
 API_TIMEOUT_SEC = 8.0
@@ -48,8 +49,7 @@ async def fetch_user_links(
     server_ref = await resolve_remnawave_server_ref(session, server_id)
     if not server_ref:
         logger.warning(
-            f"[subscription_keys] Не нашли remnawave-сервер для server_id='{server_id}' "
-            f"(username='{username}')"
+            f"[subscription_keys] Не нашли remnawave-сервер для server_id='{server_id}' (username='{username}')"
         )
         return None
 

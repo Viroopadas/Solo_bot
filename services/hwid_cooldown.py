@@ -6,6 +6,7 @@ from core.settings.modes_config import MODES_CONFIG
 from core.settings.notifications_config import NOTIFICATIONS_CONFIG
 from logger import logger
 
+
 _INITIAL_TRUST = 100.0
 _TRUST_KEY_PREFIX = "hwid_delete_trust"
 _MAX_TTL_SEC = 60 * 60 * 24 * 60
