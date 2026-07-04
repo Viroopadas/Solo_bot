@@ -38,6 +38,15 @@ async def user_key_reset_hwid(
     if not server_id:
         raise HTTPException(status_code=400, detail="У подписки не указан сервер")
 
+    from services.hwid_cooldown import check_delete_allowed, format_wait_time, register_deletion
+
+    allowed, wait_days = await check_delete_allowed(client_id)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Слишком частое удаление устройств. Попробуйте через {format_wait_time(wait_days)}.",
+        )
+
     async def _reset_devices(api):
         devices = await api.get_user_hwid_devices(client_id)
         if not devices:
@@ -59,6 +68,8 @@ async def user_key_reset_hwid(
     if reset_result is None:
         raise HTTPException(status_code=502, detail="Не удалось выполнить сброс устройств")
     total_devices, reset_devices = reset_result
+    if reset_devices > 0:
+        await register_deletion(client_id)
     await invalidate_remnawave_profile(
         session,
         server_id,
@@ -143,6 +154,15 @@ async def user_key_delete_device(
     if not server_id:
         raise HTTPException(status_code=400, detail="У подписки не указан сервер")
 
+    from services.hwid_cooldown import check_delete_allowed, format_wait_time, register_deletion
+
+    allowed, wait_days = await check_delete_allowed(client_id)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Слишком частое удаление устройств. Попробуйте через {format_wait_time(wait_days)}.",
+        )
+
     async def _delete(api):
         return await api.delete_user_hwid_device(client_id, hwid)
 
@@ -161,4 +181,5 @@ async def user_key_delete_device(
         str(client_id),
         fallback_any=True,
     )
+    await register_deletion(client_id)
     return {"ok": True}

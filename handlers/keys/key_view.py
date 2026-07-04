@@ -695,6 +695,17 @@ async def handle_unbind_device(callback_query: CallbackQuery, session: AsyncSess
         await safe_answer_callback(callback_query, "❌ У ключа отсутствует client_id.", show_alert=True)
         return
 
+    from services.hwid_cooldown import check_delete_allowed, format_wait_time, register_deletion
+
+    allowed, wait_days = await check_delete_allowed(client_id)
+    if not allowed:
+        await safe_answer_callback(
+            callback_query,
+            f"⏳ Слишком частое удаление устройств.\nПопробуйте через {format_wait_time(wait_days)}.",
+            show_alert=True,
+        )
+        return
+
     server_id = str(record.get("server_id") or "")
 
     async def _delete(api):
@@ -714,6 +725,7 @@ async def handle_unbind_device(callback_query: CallbackQuery, session: AsyncSess
         await safe_answer_callback(callback_query, "❌ Не удалось отвязать устройство.", show_alert=True)
     else:
         await invalidate_remnawave_profile(session, server_id, str(client_id), fallback_any=True)
+        await register_deletion(client_id)
         await safe_answer_callback(callback_query, "✅ Устройство отвязано.")
 
     await _render_my_devices(callback_query, session, key_ref, page)
