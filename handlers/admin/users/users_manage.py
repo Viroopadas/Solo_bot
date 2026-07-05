@@ -126,7 +126,7 @@ async def smart_user_search(session: AsyncSession, raw: str) -> list[dict]:
         note(uid, "подписка")
 
     pay_conds = [Payment.payment_id == raw]
-    if is_digit:
+    if is_digit and int(raw) <= 2_147_483_647:
         pay_conds.append(Payment.id == int(raw))
     pay_rows = (
         await session.execute(select(Payment.user_id, Payment.tg_id).where(or_(*pay_conds)).limit(SEARCH_LIMIT_PER_SOURCE))
