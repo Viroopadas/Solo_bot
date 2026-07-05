@@ -153,6 +153,8 @@ async def user_key_renew(
             is_switch=quote.is_switch,
             credit_to_balance_rub=quote.credit_rub,
             refund_to_balance_rub=quote.refund_to_balance_rub,
+            credit_days=quote.credit_days,
+            credit_value_rub=quote.credit_value_rub,
             new_device_limit=quote.selected_device_limit,
             new_traffic_gb=quote.total_gb,
         )
@@ -231,6 +233,8 @@ async def user_key_renew(
             is_switch=quote.is_switch,
             credit_to_balance_rub=quote.credit_rub,
             refund_to_balance_rub=quote.refund_to_balance_rub,
+            credit_days=quote.credit_days,
+            credit_value_rub=quote.credit_value_rub,
             new_device_limit=quote.selected_device_limit,
             new_traffic_gb=quote.total_gb,
         )
@@ -268,6 +272,8 @@ async def user_key_renew(
         is_switch=quote.is_switch,
         credit_to_balance_rub=quote.credit_rub,
         refund_to_balance_rub=quote.refund_to_balance_rub,
+        credit_days=quote.credit_days,
+        credit_value_rub=quote.credit_value_rub,
         new_device_limit=quote.selected_device_limit,
         new_traffic_gb=quote.total_gb,
     )

@@ -85,6 +85,9 @@ MODES_TITLES: Final[dict[str, str]] = {
     "PROTECT_CONTENT_ENABLED": "Защита контента",
     "TARIFF_OPTIONS_PAGINATION": "Слайдер опций",
     "HWID_DELETE_COOLDOWN_ENABLED": "Кулдаун HWID",
+    "SINGLE_SUBSCRIPTION_MODE": "Одна подписка",
+    "RENEWAL_CREDIT_AS_DAYS": "Перерасчет дни",
+    "GIFT_EXTEND_ENABLED": "Подарок продлить",
 }
 
 MONEY_FIELDS: Final[dict[str, str]] = {
