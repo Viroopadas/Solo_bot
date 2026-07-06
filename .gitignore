@@ -57,7 +57,9 @@ scripts
 setup.py
 .ruff_cache
 .github/workflows/
-modules/
+modules/*
+!modules/polls/
+!modules/polls/**
 storage/
 
 .license_state
