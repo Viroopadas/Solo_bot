@@ -1,0 +1,1 @@
+sudo systemctl restart bot.service - перезапуск бота
