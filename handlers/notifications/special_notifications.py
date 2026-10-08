@@ -76,21 +76,14 @@ async def notify_inactive_trial_users(bot: Bot, session: AsyncSession):
         builder.row(types.InlineKeyboardButton(text=MAIN_MENU, callback_data="profile"))
         keyboard = builder.as_markup()
 
-        trial_extended = user["last_notification_time"] is not None
+        # Owner 2026-10-08: one reminder per person for life; the daily "+2 days" bonus message is removed.
+        if user["last_notification_time"] is not None:
+            continue
 
-        if trial_extended and extra_days > 0:
-            total_days = extra_days + trial_days
-            message = TRIAL_INACTIVE_BONUS_MSG.format(
-                display_name=display_name,
-                extra_days_formatted=format_days(extra_days),
-                total_days_formatted=format_days(total_days),
-            )
-            users_to_extend.append(tg_id)
-        else:
-            message = TRIAL_INACTIVE_FIRST_MSG.format(
-                display_name=display_name,
-                trial_time_formatted=format_days(trial_days),
-            )
+        message = TRIAL_INACTIVE_FIRST_MSG.format(
+            display_name=display_name,
+            trial_time_formatted=format_days(trial_days),
+        )
 
         messages.append({
             "tg_id": tg_id,
