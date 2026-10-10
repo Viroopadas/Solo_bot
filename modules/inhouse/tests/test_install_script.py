@@ -129,6 +129,88 @@ def test_small_readers():
     assert inst.substitute_bot_link('<a href="__BOT_LINK__">', "https://t.me/b") == '<a href="https://t.me/b">'
 
 
-def test_settings_pay_domain_matches_template():
-    settings = (DEPLOY.parent / "settings.py").read_text(encoding="utf-8")
-    assert inst.read_pay_domain(settings) == inst.TEMPLATE_PAY_DOMAIN
+def test_settings_pay_domain_is_single_source(tmp_path, monkeypatch):
+    """Owner 2026-10-10: domain comes from settings, templates must follow it."""
+    (tmp_path / "settings.py").write_text('PUBLIC_BASE_URL = "https://payments.example.org"\n')
+    monkeypatch.setattr(inst, "FEATURE_DIR", tmp_path)
+    context = inst.Ctx(inst.parse(["check"]), False)
+    assert context.pay_domain == "payments.example.org"
+    block = inst.render_ru_block(RU_TEMPLATE, context.pay_domain, "bot.example.org")
+    assert "payments.example.org {" in block
+    assert "pay.omenso.net {" not in block
+
+
+def test_custom_web_root_used_in_all_ru_handlers():
+    """Owner mandate: install on another pair with its own web root."""
+    rendered = inst.render_ru_block(RU_TEMPLATE, "pay.example.org", "bot.example.org", "/srv/pay page")
+    assert rendered.count('root * "/srv/pay page"') == 3
+    assert "/var/www/pay-omenso" not in rendered
+
+
+def test_site_braces_ignore_placeholders_and_quoted_responses():
+    text = ['  site.example {', ' respond "{" 200', ' header X-Foo {host}', '}']
+    assert inst.find_site_block(text, "site.example") == (0, 3)
+
+
+def test_duplicate_and_combined_sites_refused():
+    with pytest.raises(inst.Stop, match="duplicate"):
+        inst.find_site_block(["site.example {", "}", "site.example {", "}"], "site.example")
+    with pytest.raises(inst.Stop, match="unsupported"):
+        inst.find_site_block(["site.example, other.example {", "}"], "site.example")
+
+
+def test_uninstall_preserves_other_sites_and_comments():
+    """Owner mandate: remove only our block and lines, preserve other sites."""
+    ru = RU_OTHER + "\n# unrelated note\n" + ru_block()
+    removed = inst.remove_ru_block(ru, "pay.omenso.net")
+    assert RU_OTHER in removed
+    assert "# unrelated note" in removed
+    assert "pay.omenso.net {" not in removed
+    assert inst.remove_ru_block(removed, "pay.omenso.net") == removed
+    bot = inst.upsert_bot_lines(BOT_FILE, "store.potok-lubvi.ru", inst.snippet_lines(SNIPPET, "172.18.0.1:3002"))
+    removed_bot = inst.remove_bot_lines(bot, "store.potok-lubvi.ru")
+    assert "/inhouse/pay" not in removed_bot
+    assert "/p2pguard2/hook" in removed_bot
+    assert "/reserved_host/webhook" in removed_bot
+    assert inst.remove_bot_lines(removed_bot, "store.potok-lubvi.ru") == removed_bot
+
+
+def test_unrelated_pay_site_refused():
+    text = 'pay.omenso.net {\n respond "another owner" 200\n}\n'
+    with pytest.raises(inst.Stop, match="unrelated"):
+        inst.upsert_ru_block(text, ru_block(), "pay.omenso.net")
+
+
+def test_caddy_reload_nonzero_without_error_word_restored(monkeypatch):
+    """External CLI exit status + owner mandate, not log-substring matching."""
+    calls = []
+    def fake(host, command, **kwargs):
+        calls.append(command)
+        if command.startswith("caddy reload"):
+            raise inst.Stop("connection refused")
+        return ""
+    monkeypatch.setattr(inst, "ssh", fake)
+    c = inst.Ctx(inst.parse(["install"]), True)
+    with pytest.raises(inst.Stop):
+        inst._apply_caddy(c, "fixture", "/srv/Caddyfile", "old", "new", docker=None, label="test")
+    inst.rollback(c)
+    assert any("cat /srv/Caddyfile.bak-inhouse-" in command for command in calls)
+
+
+def test_success_output_containing_error_is_success(monkeypatch):
+    monkeypatch.setattr(inst, "ssh", lambda *a, **k: "zero errors")
+    c = inst.Ctx(inst.parse(["install"]), True)
+    inst._apply_caddy(c, "fixture", "/srv/Caddyfile", "old", "new", docker=None, label="test")
+    assert c.changed
+
+
+def test_subprocess_nonzero_stderr_is_checked(monkeypatch):
+    import subprocess
+    monkeypatch.setattr(inst.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 7, b"", b"refused"))
+    with pytest.raises(inst.Stop, match=r"command failed \(7\)"):
+        inst.run(["fixture"])
+
+
+def test_shell_quoting_uses_posix_directory_on_windows():
+    from pathlib import PurePosixPath
+    assert str(PurePosixPath("/srv/pay page/static/pay.js").parent) == "/srv/pay page/static"

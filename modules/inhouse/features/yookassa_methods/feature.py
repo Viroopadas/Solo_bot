@@ -48,7 +48,8 @@ class StartError(Exception):
 def feature_flag() -> bool:
     from ... import settings as module_settings
 
-    return bool(getattr(module_settings, "FEATURES", {}).get(FEATURE))
+    return (bool(getattr(module_settings, "FEATURES", {}).get(FEATURE))
+            and not module_settings.DISABLE_FILE.exists())
 
 
 async def start(bot=None) -> bool:

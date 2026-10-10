@@ -13,6 +13,18 @@ from modules.inhouse.features.yookassa_methods import settings as yk_settings
 from modules.inhouse.tests.helpers import FakeStockService
 
 
+def test_local_disable_file_controls_real_feature_flag(tmp_path, monkeypatch):
+    """Owner mandate 2026-10-10: disable must leave tracked settings clean."""
+    marker = tmp_path / ".yookassa_methods.disabled"
+    monkeypatch.setattr(module_settings, "DISABLE_FILE", marker)
+    monkeypatch.setitem(module_settings.FEATURES, "yookassa_methods", True)
+    assert feature.feature_flag() is True
+    marker.touch()
+    assert feature.feature_flag() is False
+    marker.unlink()
+    assert feature.feature_flag() is True
+
+
 @pytest.fixture
 def env(monkeypatch, tmp_path, db):
     cfg = types.SimpleNamespace(
