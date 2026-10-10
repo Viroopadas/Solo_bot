@@ -343,6 +343,52 @@ def test_prewarm_thread_finishes_and_cannot_overlap(reuse, monkeypatch):
     assert not sdk_patch._session["warming"]
 
 
+def test_prewarm_redirect_never_reads_netrc(monkeypatch):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    import requests.sessions
+    from yookassa import Configuration
+    from yookassa.client import ApiClient
+
+    requests_seen = []
+    netrc_reads = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_HEAD(self):
+            requests_seen.append((self.path, self.headers.get("Authorization")))
+            self.send_response(302)
+            self.send_header("Location", "/must-not-follow")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    Configuration.configure("100500", "test_not_a_real_key")
+    original_init = ApiClient.__init__
+
+    def local_client(self):
+        original_init(self)
+        self.endpoint = f"http://127.0.0.1:{server.server_port}/warm"
+
+    monkeypatch.setattr(ApiClient, "__init__", local_client)
+    monkeypatch.setattr(requests.sessions, "get_netrc_auth", lambda url: netrc_reads.append(url) or None)
+    sdk_patch.install_session_reuse(ApiClient)
+    try:
+        sdk_patch._prewarm_blocking()
+        assert requests_seen == [("/warm", None)]
+        assert netrc_reads == []
+    finally:
+        sdk_patch.uninstall_session_reuse()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+
+
 def test_sdk_workers_do_not_share_response_cookies():
     """Owner's thread-safety check: retain the SDK's per-call cookie isolation."""
     from concurrent.futures import ThreadPoolExecutor

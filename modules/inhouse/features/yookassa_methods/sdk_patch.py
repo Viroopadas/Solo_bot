@@ -226,6 +226,9 @@ def _prewarm_blocking() -> None:
         prepared = session.prepare_request(request)
         prepared.headers.pop("Authorization", None)
         options = session.merge_environment_settings(prepared.url, {}, None, client.configuration.verify, None)
+        # send() prepares Response.next even with redirects disabled; that path can
+        # consult netrc again. Proxy/TLS environment options were already captured.
+        session.trust_env = False
         try:
             response = session.send(prepared, timeout=5, allow_redirects=False, **options)
             response.close()
