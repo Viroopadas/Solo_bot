@@ -5,18 +5,25 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex,nofollow">
-<title>Переход к оплате</title>
+<title>Открываем оплату</title>
 <link rel="stylesheet" href="/static/pay.css">
 </head>
-<body>
+<body class="loading">
 <main>
   <!-- Caddy "templates" puts the page path (/p/<label>) into the hidden field, so the
-       button works without JavaScript. pay.js fills it from the address if templates
-       did not run, and submits the form at once. -->
+       no-JavaScript button works too. pay.js fills it from the address if templates did
+       not run and submits the form at once; the person normally sees only the spinner
+       while YooKassa creates the payment. -->
   <form id="pay" method="post" action="/inhouse/pay">
     <input type="hidden" id="t" name="t" value="{{html .OriginalReq.URL.Path}}">
-    <p>Открываем страницу оплаты…</p>
-    <button type="submit">Перейти к оплате</button>
+    <div class="spinner" aria-hidden="true"></div>
+    <p class="status" id="status">Открываем оплату…</p>
+    <noscript><button type="submit">Перейти к оплате</button></noscript>
+    <!-- Shown by pay.js only if the payment page has not opened after a few seconds,
+         or when the person comes back to this page with the Back button. -->
+    <div class="late" id="late" hidden>
+      <button type="submit">Перейти к оплате</button>
+    </div>
   </form>
 </main>
 <script src="/static/pay.js"></script>
