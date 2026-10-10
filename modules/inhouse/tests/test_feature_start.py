@@ -112,6 +112,24 @@ async def test_table_created_at_start(env, db):
     feature.stop()
 
 
+async def test_start_installs_middleware_on_sending_bot(env):
+    """Spec 4.2: the instance passed to startup actually sends signed links."""
+    import json
+    from aiogram.methods import SendMessage
+    from modules.inhouse.tests.test_link_buttons import RecordingSession, purchase_markup
+
+    env.bot.session = RecordingSession()
+    assert await feature.start(env.bot)
+    try:
+        await env.bot(SendMessage(chat_id=123, text="test", reply_markup=purchase_markup()))
+        keyboard = json.loads(env.bot.session.sent[0][1]["reply_markup"])["inline_keyboard"]
+        assert keyboard[0][0]["url"].startswith("https://pay.omenso.net/p/")
+        assert "callback_data" not in keyboard[0][0]
+        assert env.svc.calls == 0  # showing the screen creates no payment
+    finally:
+        feature.stop()
+
+
 async def test_router_contract():
     """The module entry offers what utils/modules_loader.py and web/__init__.py expect."""
     from aiogram import Router

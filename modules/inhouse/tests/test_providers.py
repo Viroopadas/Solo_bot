@@ -96,3 +96,29 @@ def test_new_flow_keeps_owner_entries():
 def test_new_flow_requires_list():
     with pytest.raises(TypeError):
         providers.extend_new_flow(("YOOKASSA",))
+
+
+async def test_real_stock_provider_merge(active, monkeypatch):
+    """Spec 4.3: exercise SoloBot's merge itself, not our duplicate helper."""
+    import importlib.util
+    import sys
+    import types
+    from pathlib import Path
+
+    async def run_hooks(name, **kwargs):
+        assert name == "providers_config"
+        return [providers.providers_patch(kwargs["providers"], kwargs["flags"])]
+
+    monkeypatch.setattr(sys.modules["hooks.hooks"], "run_hooks", run_hooks, raising=False)
+    order = types.ModuleType("core.settings.providers_order_config")
+    order.PROVIDERS_ORDER = {}
+    monkeypatch.setitem(sys.modules, order.__name__, order)
+    source = Path(__file__).resolve().parents[3] / "handlers/payments/providers.py"
+    spec = importlib.util.spec_from_file_location("inhouse_review_stock_providers", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    merged = await module.get_providers_with_hooks({"YOOKASSA": True})
+    enabled = [name for name, cfg in merged.items() if cfg["enabled"]]
+    assert enabled == ["YOOKASSA_SBP", "YOOKASSA_CARD", "YOOKASSA"]
+    assert all(merged[name]["value"] == "pay_yookassa" for name in enabled)
+    assert all(merged[name]["fast"] == "process_custom_amount_input" for name in enabled)

@@ -141,3 +141,20 @@ def test_label_removed_after_scope(patched):
 def test_double_install_refused(patched):
     with pytest.raises(sdk_patch.PatchError):
         sdk_patch.install(Payment)
+
+
+def test_sdk_failure_is_not_retried(patched, monkeypatch):
+    """Spec 4.3: the wrapper itself never retries a failed create."""
+    from yookassa.client import ApiClient
+
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append(1)
+        raise TimeoutError("test transport timeout")
+
+    monkeypatch.setattr(ApiClient, "request", fail)
+    with pytest.raises(TimeoutError), context.method_scope("sbp"):
+        Payment.create(stock_payload(1, 10), "k")
+    assert calls == [1]
+    assert context.current() is None
