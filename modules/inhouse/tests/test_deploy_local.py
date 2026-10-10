@@ -13,6 +13,12 @@ import subprocess
 import shutil
 
 import pytest
+
+# Owner 2026-10-10: these tests start real Caddy/Chromium and require explicit opt-in.
+pytestmark = pytest.mark.skipif(
+    os.environ.get("INHOUSE_LOCAL_DEPLOY_TESTS") != "1",
+    reason="set INHOUSE_LOCAL_DEPLOY_TESTS=1 to start local Caddy/Chromium",
+)
 from aiohttp import ClientSession, web
 from aiohttp.test_utils import TestServer
 from yookassa import Payment
