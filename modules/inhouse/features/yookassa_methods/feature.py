@@ -15,6 +15,8 @@ Start conditions:
 
 Parts installed (and undone in reverse order on failure or stop):
 USE_NEW_PAYMENT_FLOW entries, button labels, SDK wrapper, shared HTTP connection pools, outgoing-request layer.
+Right before the outgoing-request layer the saved menu mode of the watch is restored
+(watch.py, menu_mode.py); the watch itself never calls start/stop.
 The providers hook and the web endpoint are registered by the module at import time and
 do nothing while the feature is not active.
 """
@@ -34,6 +36,7 @@ from . import (
     state,
     store,
     token,
+    watch,
 )
 
 
@@ -133,6 +136,8 @@ async def _start(bot) -> bool:
         step = "sdk session reuse"
         sdk_patch.install_session_reuse(api_client_cls)
         undo.append((step, sdk_patch.uninstall_session_reuse))
+        step = "menu mode"
+        _restore_menu_mode()
         step = "link layer"
         middleware = link_buttons.LinkButtonsMiddleware()
         bot.session.middleware(middleware)
@@ -153,6 +158,19 @@ async def _start(bot) -> bool:
         f"flow {list(flow)}, icon {'yes' if s.SBP_ICON_CUSTOM_EMOJI_ID else 'no'}"
     )
     return True
+
+
+def _restore_menu_mode() -> None:
+    """Saved menu mode of the watch, read BEFORE the link layer exists (spec 3.8): the very
+    first menu after a restart is already right. Never blocks the start: any problem means
+    the three buttons (mode links)."""
+    try:
+        watch.WATCH.restore_mode()
+    except Exception as exc:
+        from . import menu_mode
+
+        menu_mode.set_mode(menu_mode.LINKS)
+        logger.error(f"{PREFIX} saved menu mode not read, mode links: {type(exc).__name__}")
 
 
 def _fail(reason: str) -> bool:

@@ -5,13 +5,14 @@ fallback path finds handlers.payments.yookassa.handlers), fast="process_custom_a
 value="pay_yookassa" (the hidden top-up menu reads cfg["value"]), currency="RUB".
 Order -30 / -20; the stock YOOKASSA gets -10. Added only when YooKassa is enabled.
 The new names are appended to USE_NEW_PAYMENT_FLOW in place, without duplicates.
+In the "fallback" menu mode (menu_mode.py) nothing is added: menus show the stock button.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from . import state
+from . import menu_mode, state
 
 
 SBP = "YOOKASSA_SBP"
@@ -31,6 +32,8 @@ DEFAULTS = {
 def providers_patch(providers: dict[str, dict[str, Any]] | None, flags: dict[str, bool] | None) -> dict:
     deps = state.current()
     if deps is None:
+        return {}
+    if menu_mode.is_fallback():
         return {}
     providers = providers or {}
     stock = providers.get(STOCK)

@@ -59,3 +59,37 @@ PAGE_LIMITED = "Слишком много попыток оплаты. Подо�
 # --- Redirect safety ----------------------------------------------------------------------
 # The endpoint redirects only to these YooKassa hosts (and their subdomains), https only.
 YOOKASSA_REDIRECT_HOSTS: tuple[str, ...] = ("yoomoney.ru", "yookassa.ru")
+
+# --- Payment site watch (watch.py) -------------------------------------------------------
+# The watch checks PUBLIC_BASE_URL every few minutes. When the site is broken it switches
+# NEW menus to the stock YooKassa button ("fallback") and writes to the owner in Telegram;
+# when the site works again it brings the three buttons back. It never stops the feature.
+WATCH_ENABLED = True  # False: no checks, no messages, menus always show the three buttons
+AUTO_FALLBACK = True  # False: only messages, menus always show the three buttons
+WATCH_INTERVAL_SECONDS = 120  # pause between checks while everything works (and while broken)
+WATCH_RETRY_SECONDS = 30  # pause after a failed check while not yet "broken"
+WATCH_JITTER_SECONDS = 10  # random 0..N seconds added to the normal pause
+WATCH_REQUEST_TIMEOUT = 10  # seconds per request of a check
+WATCH_FAILS = 3  # failed checks in a row -> broken
+WATCH_OKS = 3  # good checks in a row -> works again
+WATCH_MIN_FALLBACK_MINUTES = 10  # the stock button stays at least this long
+WATCH_FLAP_ENTRIES_PER_HOUR = 3  # this many switches to the stock button within an hour ...
+WATCH_FLAP_HOLD_MINUTES = 60  # ... keep the stock button at least this long
+WATCH_REMIND_FIRST_MINUTES = 60  # first reminder while broken
+WATCH_REMIND_EVERY_HOURS = 6  # later reminders (and repeated warnings)
+OBSERVER_STALE_MINUTES = 6  # a signal of the check from Russia older than this is "unknown"
+OBSERVER_SILENT_ALERT_MINUTES = 15  # warn when the check from Russia is silent this long
+OBSERVER_SCOPE_TEXT = "Из сети Timeweb в России"  # where the check from Russia looks from
+CERT_WARN_DAYS = 14
+DOMAIN_WARN_DAYS = 30
+WATCH_DOMAINS: tuple[str, ...] = ("omenso.net", "potok-lubvi.ru")
+# Certificates checked once a day: host -> where to look for the renewal.
+WATCH_CERT_HOSTS: dict[str, str] = {
+    "pay.omenso.net": "test-bg-ru1 (Caddy переходника)",
+    "store.potok-lubvi.ru": "solobot-remnawave (Caddy бота)",
+}
+# Telegram chat ids for the watch messages; empty = ADMIN_ID from the bot config.
+WATCH_ALERT_CHAT_IDS: tuple[int, ...] = ()
+# Outside git, next to the label secret; the installer never copies these files.
+WATCH_STATE_FILE = Path(__file__).resolve().parents[4] / "storage" / "inhouse" / "watch.json"
+OBSERVER_SECRET_FILE = Path(__file__).resolve().parents[4] / "storage" / "inhouse" / "observer.secret"

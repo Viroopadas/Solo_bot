@@ -10,6 +10,10 @@ Features live in features/<name>/ and are switched in settings.py (FEATURES). No
 closed (compiled) is imported here: every feature imports bot internals lazily at start.
 Feature start runs as a background task from the startup hook, so it is not bound by the
 4-second hook timeout; until it finishes the bot shows the stock screens.
+The pay-site watch (features/yookassa_methods/watch.py) runs as its own supervised task,
+started here and cancelled (and awaited) on shutdown. After the module is switched off and
+on in the admin panel the bot must be restarted: the admin switch re-imports the code but
+does not call startup/shutdown.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from .features.yookassa_methods import (
     pay_endpoint as yk_endpoint,
     providers as yk_providers,
     settings as yk_settings,
+    watch as yk_watch,
 )
 
 
@@ -51,6 +56,9 @@ async def inhouse_startup(bot=None, **kwargs: object):
     if task is not None and not task.done():
         return
     _tasks["start"] = asyncio.create_task(_start_features(bot))
+    watch_task = _tasks.get("watch")
+    if watch_task is None or watch_task.done():
+        _tasks["watch"] = asyncio.create_task(yk_watch.supervise(bot))
 
 
 @register_hook("shutdown")
@@ -58,6 +66,11 @@ async def inhouse_shutdown(**kwargs: object):
     task = _tasks.pop("start", None)
     if task is not None and not task.done():
         task.cancel()
+    watch_task = _tasks.pop("watch", None)
+    if watch_task is not None and not watch_task.done():
+        watch_task.cancel()
+        # Wait for the cancellation to finish (it saves watch.json), never longer than 3 s.
+        await asyncio.wait({watch_task}, timeout=3)
     try:
         yk_feature.stop()
     except Exception as exc:

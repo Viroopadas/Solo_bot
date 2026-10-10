@@ -148,6 +148,41 @@ def module_enabled() -> bool:
         return True
 
 
+def admin_ids(cfg: Any = None) -> list[int]:
+    """Telegram ids of the bot admins: ADMIN_ID of the config, a number or a list (both
+    versions); v6 may also name it ADMIN_IDS. Unknown shapes give an empty list."""
+    if cfg is None:
+        cfg = load_config()
+    raw = getattr(cfg, "ADMIN_ID", None)
+    if raw is None:
+        raw = getattr(cfg, "ADMIN_IDS", None)
+    return parse_ids(raw)
+
+
+def parse_ids(raw: Any) -> list[int]:
+    if raw is None or isinstance(raw, bool):
+        return []
+    if isinstance(raw, (int, str)):
+        raw = [raw]
+    out: list[int] = []
+    try:
+        items = list(raw)
+    except TypeError:
+        return []
+    for item in items:
+        if isinstance(item, bool):
+            continue
+        if isinstance(item, int):
+            value = item
+        elif isinstance(item, str) and item.strip().lstrip("-").isdigit():
+            value = int(item.strip())
+        else:
+            continue
+        if value != 0 and value not in out:
+            out.append(value)
+    return out
+
+
 def bot_link(cfg: Any, override: str) -> str:
     link = (override or getattr(cfg, "REDIRECT_LINK", "") or "").strip()
     if link.startswith(("https://t.me/", "tg://")):

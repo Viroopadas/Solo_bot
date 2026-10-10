@@ -34,11 +34,12 @@ if not getattr(sys.modules.get("modules"), "__inhouse_fake__", False):
     sys.modules["modules"] = _pkg
 
 from modules.inhouse.tests import helpers  # noqa: E402  (installs logger/hooks/config fakes)
-from modules.inhouse.features.yookassa_methods import compat, sdk_patch, state, store  # noqa: E402
+from modules.inhouse.features.yookassa_methods import compat, menu_mode, sdk_patch, state, store, watch  # noqa: E402
+from modules.inhouse.features.yookassa_methods import settings as yk_settings  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def _reset(monkeypatch):
+def _reset(monkeypatch, tmp_path):
     helpers.FAKE_LOGGER.records.clear()
     state.STATE.active = False
     state.STATE.starting = False
@@ -48,7 +49,14 @@ def _reset(monkeypatch):
     monkeypatch.setattr(state, "module_enabled", lambda: True)
     compat._flavor_cache.clear()
     compat._flavor_cache["flavor"] = compat.V512
+    # The watch never touches the bot's real storage/ in tests.
+    monkeypatch.setattr(yk_settings, "WATCH_STATE_FILE", tmp_path / "watch-storage" / "watch.json")
+    monkeypatch.setattr(yk_settings, "OBSERVER_SECRET_FILE", tmp_path / "watch-storage" / "observer.secret")
+    menu_mode.set_mode(menu_mode.LINKS)
+    watch.reset()
     yield
+    menu_mode.set_mode(menu_mode.LINKS)
+    watch.reset()
     sdk_patch.uninstall()
     state.STATE.active = False
     state.STATE.deps = None

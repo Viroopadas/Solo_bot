@@ -1,6 +1,8 @@
 """POST /inhouse/pay: open a link button -> YooKassa payment page.
 
 Order of checks (section 4.2 of the spec):
+0. a probe of the pay-site watch or a signal of the check from Russia (watch.answer_fast):
+   answered at once, before everything else, without database or YooKassa;
 1. feature active and module enabled, else "payment temporarily unavailable";
 2. Origin (only if the browser sent one; "null" is what no-referrer pages send);
 3. label: signature, time, method from the white list - before any database access;
@@ -29,7 +31,7 @@ from aiohttp import web
 
 from logger import logger
 
-from . import context, pages, state, store, token
+from . import context, pages, state, store, token, watch
 
 
 BODY_MAX = 2048
@@ -235,6 +237,10 @@ def _log(outcome: Outcome, started: float) -> None:
     )
     if outcome.reason:
         line += f" reason={outcome.reason}"
+    try:
+        watch.WATCH.note_outcome(outcome.kind, outcome.reason)
+    except Exception as exc:  # the watch must never affect a payment
+        logger.warning(f"[inhouse.yk] watch outcome note failed: {type(exc).__name__}")
     if outcome.kind == "error":
         logger.error(line)
     elif outcome.kind in ("created", "reused", "paid", "stale"):
@@ -251,6 +257,11 @@ def _redirect(url: str) -> web.Response:
 
 async def handle(request: web.Request) -> web.Response:
     started = time.monotonic()
+    # Probe of the pay-site watch and signals of the check from Russia are answered first,
+    # before the activity and Origin checks, without database or YooKassa (watch.py).
+    fast = await watch.answer_fast(request)
+    if fast is not None:
+        return fast
     deps = state.current()
     if deps is None:
         from . import settings as feature_settings

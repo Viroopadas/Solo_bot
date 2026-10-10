@@ -12,6 +12,10 @@ In the top-up menu (hidden in production) the three providers would show three i
 If a link cannot be made, the button stays a normal button: pressing it goes to the stock
 YooKassa handler and opens today's "Pay" screen, so payment never breaks. Any error in
 this layer is logged and the request is sent unchanged.
+
+In the "fallback" menu mode (menu_mode.py, set by the watch) nothing becomes a link: the
+stock YooKassa button keeps its own callback and label, and SBP/card buttons of a menu
+built before the switch are removed (rows left empty are dropped).
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ from aiogram.types import InlineKeyboardMarkup
 
 from logger import logger
 
-from . import sdk_patch, state, token
+from . import menu_mode, sdk_patch, state, token
 from .providers import CARD, SBP, STOCK
 
 
@@ -124,6 +128,38 @@ def rewrite_markup(markup: InlineKeyboardMarkup, deps: state.Deps, tg_id: int, i
     return InlineKeyboardMarkup(inline_keyboard=new_rows)
 
 
+def strip_markup(markup: InlineKeyboardMarkup, deps: state.Deps):
+    """Fallback mode: drop SBP/card buttons, keep the stock button as it is; None = untouched."""
+    rows = markup.inline_keyboard or []
+    callbacks = [getattr(b, "callback_data", None) for row in rows for b in row]
+    drop = {f"{CALLBACK_PREFIX}{SBP}", f"{CALLBACK_PREFIX}{CARD}"}
+    has_drop = any(cd in drop for cd in callbacks)
+    topup_dupes = sum(1 for cd in callbacks if cd == TOPUP_CALLBACK) > 1
+    if not has_drop and not topup_dupes:
+        return None
+    new_rows: list[list] = []
+    topup_seen = False
+    for row in rows:
+        new_row = []
+        for button in row:
+            cd = getattr(button, "callback_data", None)
+            if cd in drop:
+                continue
+            if topup_dupes and cd == TOPUP_CALLBACK:
+                if topup_seen:
+                    continue
+                topup_seen = True
+                data = button.model_dump(exclude_none=True)
+                data["text"] = deps.standard_yookassa_label
+                data.pop("icon_custom_emoji_id", None)
+                new_row.append(type(button)(**data))
+                continue
+            new_row.append(button)
+        if new_row:
+            new_rows.append(new_row)
+    return InlineKeyboardMarkup(inline_keyboard=new_rows)
+
+
 class LinkButtonsMiddleware(BaseRequestMiddleware):
     async def __call__(self, make_request, bot, method):  # noqa: ANN204 (aiogram protocol)
         try:
@@ -143,6 +179,12 @@ class LinkButtonsMiddleware(BaseRequestMiddleware):
         tg_id = private_chat_id(method)
         if tg_id is None:
             return False
+        if menu_mode.is_fallback():
+            new_markup = strip_markup(markup, deps)
+            if new_markup is None:
+                return False
+            method.reply_markup = new_markup
+            return True
         new_markup = rewrite_markup(markup, deps, tg_id, token.now_ms())
         if new_markup is None:
             return False
