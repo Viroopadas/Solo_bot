@@ -256,6 +256,9 @@ def _redirect(url: str) -> web.Response:
 
 
 async def handle(request: web.Request) -> web.Response:
+    # Public Request.clone API: bound reading before either fast or normal form parsing,
+    # including chunked requests with no Content-Length. Both branches share this cache.
+    request = request.clone(client_max_size=BODY_MAX)
     started = time.monotonic()
     # Probe of the pay-site watch and signals of the check from Russia are answered first,
     # before the activity and Origin checks, without database or YooKassa (watch.py).

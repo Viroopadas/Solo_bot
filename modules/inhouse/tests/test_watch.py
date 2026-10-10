@@ -2,6 +2,7 @@
 
 Spec 2026-10-10 "pay site watch" edition 2, sections 3.3-3.10 and 9. Fakes only: clock,
 HTTP requests of a round, Telegram bot, TLS/RDAP/whois. No servers, no network.
+Independent expectations: main project .ai-engine/decisions/2026-10-10-pay-watch-verification-invariants.md.
 """
 
 import asyncio
@@ -641,6 +642,29 @@ def test_unconfirmed_messages_not_discarded_after_fifty(env):
         env.w.enqueue("warn", f"warning {n}")
     saved = json.loads(yk_settings.WATCH_STATE_FILE.read_text(encoding="utf-8"))
     assert len(saved["queue"]) == 51 and saved["queue"][0]["text"] == "warning 0"
+
+
+@pytest.mark.parametrize("body,expected", [
+    (b"probe=0123456789abcdef", 200),
+    (b"probe=0123456789abcdef" + b"x" * 2048, 400),
+    (b"t=1.123.s.1.1800.forged", 400),
+], ids=["valid", "oversized", "normal-label"])
+async def test_streamed_body_is_bounded_without_starting_server(env, body, expected):
+    """Architecture 3.2: body limit before parsing, including HTTP chunked transport."""
+    from unittest.mock import AsyncMock, Mock
+    from aiohttp.test_utils import make_mocked_request
+    from modules.inhouse.features.yookassa_methods import pay_endpoint
+
+    payload = Mock()
+    payload.readany = AsyncMock(side_effect=[body, b""])
+    request = make_mocked_request(
+        "POST", "/inhouse/pay", headers={"Content-Type": "application/x-www-form-urlencoded"}, payload=payload,
+    )
+    assert request.content_length is None
+    response = await pay_endpoint.handle(request)
+    assert response.status == expected
+    if expected == 200:
+        assert response.text == "inhouse-probe 0123456789abcdef ready links -1"
 
 
 async def test_no_recipients_logs_and_drops(env, monkeypatch, logs):

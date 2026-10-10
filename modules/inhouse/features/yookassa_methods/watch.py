@@ -1,6 +1,6 @@
 """Payment site watch (spec 2026-10-10 "pay site watch", edition 2, sections 3 and 4.3).
 
-What it does, in one task started from the module's startup hook:
+What it does, in a supervised loop with separate maintenance started from the module's startup hook:
 - every WATCH_INTERVAL_SECONDS: one check round over PUBLIC_BASE_URL (section 3.3):
   GET /p/probe-<nonce> (the page with the label filled in and pay.js linked) and
   POST /inhouse/pay probe=<nonce> (the bot's exact answer, through the Russian server);
@@ -990,14 +990,14 @@ def safe_create_reason(reason: str) -> str:
 async def answer_fast(request):
     """Probe answer (3.2) or observer ack (4.3); None = the request goes the normal branch.
 
-    Size is checked before reading; only a form body of known length up to 2 KB is read
-    (aiohttp caches it, so the normal branch can still parse the same body).
+    The endpoint caps aiohttp's reader at 2 KB before either branch. Known excessive
+    lengths are refused before reading; chunked bodies use that same bounded reader.
     """
     try:
         if request.method != "POST" or request.content_type != "application/x-www-form-urlencoded":
             return None
         length = request.content_length
-        if length is None or length > BODY_MAX:
+        if length is not None and length > BODY_MAX:
             return None
         body = await request.read()
     except Exception:
