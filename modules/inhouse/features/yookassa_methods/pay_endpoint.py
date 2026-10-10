@@ -262,7 +262,13 @@ async def handle(request: web.Request) -> web.Response:
     started = time.monotonic()
     # Probe of the pay-site watch and signals of the check from Russia are answered first,
     # before the activity and Origin checks, without database or YooKassa (watch.py).
-    fast = await watch.answer_fast(request)
+    try:
+        fast = await watch.answer_fast(request)
+    except web.HTTPRequestEntityTooLarge:
+        from . import settings as feature_settings
+
+        _log(Outcome("invalid", reason="body too large"), started)
+        return pages.render("invalid", feature_settings, _fallback_bot_link(feature_settings))
     if fast is not None:
         return fast
     deps = state.current()

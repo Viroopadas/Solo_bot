@@ -993,6 +993,8 @@ async def answer_fast(request):
     The endpoint caps aiohttp's reader at 2 KB before either branch. Known excessive
     lengths are refused before reading; chunked bodies use that same bounded reader.
     """
+    from aiohttp import web
+
     try:
         if request.method != "POST" or request.content_type != "application/x-www-form-urlencoded":
             return None
@@ -1000,12 +1002,12 @@ async def answer_fast(request):
         if length is not None and length > BODY_MAX:
             return None
         body = await request.read()
+    except web.HTTPRequestEntityTooLarge:
+        raise  # The normal branch must not parse a remaining tail of an oversized body.
     except Exception:
         return None
     if len(body) > BODY_MAX:
         return None
-    from aiohttp import web
-
     headers = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
     match = PROBE_RE.fullmatch(body)
     if match:

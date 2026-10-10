@@ -656,7 +656,13 @@ async def test_streamed_body_is_bounded_without_starting_server(env, body, expec
     from modules.inhouse.features.yookassa_methods import pay_endpoint
 
     payload = Mock()
-    payload.readany = AsyncMock(side_effect=[body, b""])
+    chunks = [body, b""]
+    if len(body) > 2048:
+        from modules.inhouse.features.yookassa_methods import token
+        # An oversized prefix must not let a valid signed label in a later chunk reach payment code.
+        tail = f"t={token.issue(state.STATE.deps.secret, ADMIN, 'sbp', 1800)}".encode()
+        chunks = [body, tail, b""]
+    payload.readany = AsyncMock(side_effect=chunks)
     request = make_mocked_request(
         "POST", "/inhouse/pay", headers={"Content-Type": "application/x-www-form-urlencoded"}, payload=payload,
     )
