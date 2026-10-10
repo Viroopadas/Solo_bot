@@ -17,9 +17,16 @@ pay.omenso.net {
 		}
 		reverse_proxy https://store.potok-lubvi.ru {
 			header_up Host {upstream_hostport}
+			# keep the TLS connection to the bot warm: saves ~0.25 s per click
+			# (the bot's Caddy answers /inhouse/ping itself, the bot is not called)
+			health_uri /inhouse/ping
+			health_interval 30s
+			health_timeout 5s
+			health_status 2xx
 			transport http {
 				dial_timeout 5s
 				response_header_timeout 20s
+				keepalive 2m
 			}
 		}
 	}

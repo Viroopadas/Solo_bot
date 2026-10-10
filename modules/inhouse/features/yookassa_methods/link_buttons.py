@@ -21,7 +21,7 @@ from aiogram.types import InlineKeyboardMarkup
 
 from logger import logger
 
-from . import state, token
+from . import sdk_patch, state, token
 from .providers import CARD, SBP, STOCK
 
 
@@ -147,4 +147,5 @@ class LinkButtonsMiddleware(BaseRequestMiddleware):
         if new_markup is None:
             return False
         method.reply_markup = new_markup
+        sdk_patch.prewarm()
         return True

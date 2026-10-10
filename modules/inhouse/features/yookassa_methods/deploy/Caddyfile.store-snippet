@@ -10,3 +10,5 @@
 		header_up X-Forwarded-For {remote_host}
 		header_up X-Forwarded-Proto {scheme}
 	}
+	# keep-warm probe of the Russian server's Caddy, answered here without calling the bot
+	respond /inhouse/ping 204

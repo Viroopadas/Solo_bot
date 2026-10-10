@@ -16,7 +16,7 @@ from aiogram.methods import (
 )
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 
-from modules.inhouse.features.yookassa_methods import link_buttons, state, token
+from modules.inhouse.features.yookassa_methods import link_buttons, sdk_patch, state, token
 from modules.inhouse.features.yookassa_methods import settings as yk_settings
 from modules.inhouse.tests.helpers import SECRET, activate, make_deps
 
@@ -217,3 +217,14 @@ async def test_layer_error_never_blocks_sending(active, monkeypatch):
     method = SendMessage(chat_id=TG, text="x", reply_markup=purchase_markup())
     assert await link_buttons.LinkButtonsMiddleware()(make_request, None, method) == "ok"
     assert called and flat(method.reply_markup)[0].callback_data == SBP_CB
+
+
+def test_rewrite_prewarms_yookassa_connection(active, monkeypatch):
+    calls = []
+    monkeypatch.setattr(sdk_patch, "prewarm", lambda: calls.append(1) or True)
+    method = SendMessage(chat_id=TG, text="x", reply_markup=purchase_markup())
+    assert link_buttons.LinkButtonsMiddleware.apply(method) is True
+    assert calls == [1]
+    other = SendMessage(chat_id=TG, text="x", reply_markup=InlineKeyboardMarkup(inline_keyboard=[]))
+    link_buttons.LinkButtonsMiddleware.apply(other)
+    assert calls == [1]

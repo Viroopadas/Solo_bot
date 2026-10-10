@@ -109,6 +109,14 @@ def load_yookassa_payment():
     return Payment
 
 
+def load_yookassa_api_client():
+    try:
+        from yookassa.client import ApiClient
+    except Exception as exc:
+        raise CompatError(f"yookassa ApiClient not importable ({type(exc).__name__})") from None
+    return ApiClient
+
+
 def session_maker():
     module = _try_import("database")
     maker = getattr(module, "async_session_maker", None) if module else None

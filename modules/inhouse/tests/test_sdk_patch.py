@@ -158,3 +158,111 @@ def test_sdk_failure_is_not_retried(patched, monkeypatch):
         Payment.create(stock_payload(1, 10), "k")
     assert calls == [1]
     assert context.current() is None
+
+
+# ---- shared HTTP session to the YooKassa API ------------------------------------------------
+
+class _FakeSession:
+    def __init__(self):
+        self.closed = 0
+        self.heads = []
+
+    def close(self):
+        self.closed += 1
+
+    def head(self, url, **kwargs):
+        self.heads.append(url)
+
+
+def _fake_client_cls():
+    made = []
+
+    class FakeClient:
+        endpoint = "https://api.example.invalid/v3"
+        max_attempts = 3
+        timeout = 1800
+
+        class configuration:
+            verify = True
+
+        def get_session(self):
+            s = _FakeSession()
+            made.append(s)
+            return s
+
+    return FakeClient, made
+
+
+@pytest.fixture
+def reuse():
+    cls, made = _fake_client_cls()
+    original = cls.__dict__["get_session"]
+    sdk_patch.install_session_reuse(cls)
+    yield cls, made
+    sdk_patch.uninstall_session_reuse()
+    assert cls.__dict__["get_session"] is original
+
+
+def test_session_shared_and_close_is_noop(reuse):
+    cls, made = reuse
+    a, b = cls().get_session(), cls().get_session()
+    assert a is b and len(made) == 1
+    a.close()  # what the SDK does after every request
+    assert made[0].closed == 0
+
+
+def test_uninstall_really_closes_shared_session():
+    cls, made = _fake_client_cls()
+    sdk_patch.install_session_reuse(cls)
+    cls().get_session()
+    sdk_patch.uninstall_session_reuse()
+    assert made[0].closed == 1
+    assert cls().get_session() is not made[0]
+
+
+def test_session_reuse_twice_refused(reuse):
+    cls, _ = reuse
+    with pytest.raises(sdk_patch.PatchError):
+        sdk_patch.install_session_reuse(cls)
+
+
+def test_real_sdk_session_keeps_retry_adapter():
+    from requests.adapters import HTTPAdapter
+    from yookassa import Configuration
+    from yookassa.client import ApiClient
+
+    Configuration.configure("100500", "test_not_a_real_key")
+    sdk_patch.install_session_reuse(ApiClient)
+    try:
+        s1, s2 = ApiClient().get_session(), ApiClient().get_session()
+        assert s1 is s2
+        adapter = s1.get_adapter("https://api.yookassa.ru/v3/payments")
+        assert isinstance(adapter, HTTPAdapter) and adapter.max_retries.total == ApiClient().max_attempts
+        s1.close()
+        assert s1.adapters  # still mounted: close() is a no-op while shared
+    finally:
+        sdk_patch.uninstall_session_reuse()
+    assert ApiClient().get_session() is not s1
+
+
+def test_prewarm_throttled_and_heads_endpoint(reuse, monkeypatch):
+    cls, made = reuse
+    started = []
+
+    class SyncThread:
+        def __init__(self, target, **kwargs):
+            self.target = target
+
+        def start(self):
+            started.append(1)
+            self.target()
+
+    monkeypatch.setattr(sdk_patch.threading, "Thread", SyncThread)
+    assert sdk_patch.prewarm() is True
+    assert sdk_patch.prewarm() is False  # within the interval
+    assert started == [1]
+    assert made[0].heads == [cls.endpoint]
+
+
+def test_prewarm_noop_without_install():
+    assert sdk_patch.prewarm() is False

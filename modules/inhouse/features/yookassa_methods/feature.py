@@ -14,7 +14,7 @@ Start conditions:
   or creatable, the bot object is available.
 
 Parts installed (and undone in reverse order on failure or stop):
-USE_NEW_PAYMENT_FLOW entries, button labels, SDK wrapper, outgoing-request layer.
+USE_NEW_PAYMENT_FLOW entries, button labels, SDK wrapper, shared SDK HTTP session, outgoing-request layer.
 The providers hook and the web endpoint are registered by the module at import time and
 do nothing while the feature is not active.
 """
@@ -84,6 +84,7 @@ async def _start(bot) -> bool:
         step = "yookassa sdk"
         payment_cls = compat.load_yookassa_payment()
         sdk_patch.check_patchable(payment_cls)
+        api_client_cls = compat.load_yookassa_api_client()
         step = "link address"
         if not str(s.PUBLIC_BASE_URL or "").startswith("https://"):
             raise StartError("PUBLIC_BASE_URL is not an https address")
@@ -128,6 +129,9 @@ async def _start(bot) -> bool:
         step = "sdk wrapper"
         sdk_patch.install(payment_cls)
         undo.append((step, sdk_patch.uninstall))
+        step = "sdk session reuse"
+        sdk_patch.install_session_reuse(api_client_cls)
+        undo.append((step, sdk_patch.uninstall_session_reuse))
         step = "link layer"
         middleware = link_buttons.LinkButtonsMiddleware()
         bot.session.middleware(middleware)
