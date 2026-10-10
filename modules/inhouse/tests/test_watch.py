@@ -601,6 +601,48 @@ async def test_fixed_before_broken_was_sent_gives_one_summary(env):
     ]
 
 
+async def test_partial_delivery_merges_per_recipient_and_keeps_retry_after(env, monkeypatch):
+    """Architecture 3.5: each recipient gets the recovery/summary; 429 remains binding."""
+    from aiogram.exceptions import TelegramRetryAfter
+    from aiogram.methods import SendMessage
+
+    monkeypatch.setattr(yk_settings, "WATCH_ALERT_CHAT_IDS", (ADMIN, ADMIN + 1))
+    await fail_rounds(env, 3)
+    first = env.bot.send_message
+
+    async def send(**kwargs):
+        if kwargs["chat_id"] == ADMIN + 1:
+            raise TelegramRetryAfter(SendMessage(chat_id=ADMIN + 1, text="x"), "limit", 3600)
+        return await first(**kwargs)
+
+    monkeypatch.setattr(env.bot, "send_message", send)
+    await env.w.deliver()
+    assert len(env.bot.sent) == 1 and env.bot.sent[0]["chat_id"] == ADMIN
+    due = env.w.data["queue"][0]["next_at"]
+    await ok_rounds(env, 3)
+    env.clock.t = env.w.data["incident"]["since"] + 12 * 60
+    await env.w.evaluate()
+    assert {q["kind"] for q in env.w.data["queue"]} == {"summary", "up"}
+    summary = next(q for q in env.w.data["queue"] if q["kind"] == "summary")
+    assert summary["chats"] == [ADMIN + 1] and summary["next_at"] == due
+    monkeypatch.setattr(env.bot, "send_message", first)
+    await env.w.deliver()
+    assert len(env.bot.sent) == 1  # recovery cannot bypass the token-wide 429 delay
+    env.clock.t = due
+    await env.w.deliver()
+    second_admin = [m["text"] for m in env.bot.sent if m["chat_id"] == ADMIN + 1]
+    assert len(second_admin) == 1 and "была недоступна" in second_admin[0]
+    assert not env.w.data["queue"]
+
+
+def test_unconfirmed_messages_not_discarded_after_fifty(env):
+    """Architecture T4/3.5: undelivered messages must survive a long Telegram outage."""
+    for n in range(51):
+        env.w.enqueue("warn", f"warning {n}")
+    saved = json.loads(yk_settings.WATCH_STATE_FILE.read_text(encoding="utf-8"))
+    assert len(saved["queue"]) == 51 and saved["queue"][0]["text"] == "warning 0"
+
+
 async def test_no_recipients_logs_and_drops(env, monkeypatch, logs):
     monkeypatch.setattr(yk_settings, "WATCH_ALERT_CHAT_IDS", ())
     monkeypatch.setattr(compat, "load_config", lambda: types.SimpleNamespace())

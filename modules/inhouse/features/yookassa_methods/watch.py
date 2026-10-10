@@ -54,7 +54,6 @@ SCHEMA = 1
 TICK_SECONDS = 5
 READ_LIMIT = 16 * 1024
 BODY_MAX = 2048
-QUEUE_MAX = 50
 RETRY_STEPS = (60, 120, 300, 600)  # then every 600 s
 RESTART_DELAY = 60
 DAY = 86400.0
@@ -139,6 +138,7 @@ def fresh() -> dict:
         "warned": {},
         "expiry_fails": {},
         "daily_last": 0.0,
+        "telegram_not_before": 0.0,
     }
 
 
@@ -154,7 +154,7 @@ def validate(data) -> dict:
         if key == "incident":
             if value is not None and not (isinstance(value, dict) and isinstance(value.get("since"), (int, float))):
                 raise ValueError(key)
-        elif key == "hold_until" or key == "daily_last":
+        elif key in ("hold_until", "daily_last", "telegram_not_before"):
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 raise ValueError(key)
         elif not isinstance(value, type(default)):
@@ -170,7 +170,7 @@ def validate(data) -> dict:
     def counter(value):
         return type(value) is int and value >= 0
 
-    for key in ("hold_until", "daily_last"):
+    for key in ("hold_until", "daily_last", "telegram_not_before"):
         if not number(out[key]):
             raise ValueError(key)
     a = {**fresh()["a"], **out["a"]}
@@ -425,13 +425,25 @@ class Watch:
         queue = self.data["queue"]
         if kind == "up" and incident:
             unsent_down = [
-                q for q in queue if q.get("incident") == incident and q["kind"] == "down" and len(q["chats"]) == q.get("all")
+                q for q in queue if q.get("incident") == incident and q["kind"] == "down" and q["chats"]
             ]
             if unsent_down:
-                # "fixed" before "broken" was delivered: one summary instead of the pair.
-                self.data["queue"] = queue = [q for q in queue if q.get("incident") != incident]
-                text = unsent_down[0].get("summary") or text
-                kind = "summary"
+                # Merge per recipient: one admin may have received DOWN while another has not.
+                pending = {chat for q in unsent_down for chat in q["chats"]}
+                self.data["queue"] = queue = [
+                    q for q in queue if not (q.get("incident") == incident and q["kind"] in ("down", "remind"))
+                ]
+                summary = dict(unsent_down[0])
+                summary.update(
+                    kind="summary", text=unsent_down[0].get("summary") or text,
+                    chats=list(dict.fromkeys(chat for q in unsent_down for chat in q["chats"])),
+                    all=len(pending), next_at=max(q.get("next_at", 0.0) for q in unsent_down),
+                )
+                queue.append(summary)
+                chats = [chat for chat in chats if chat not in pending]
+                if not chats:
+                    self.save()
+                    return
         queue.append(
             {
                 "id": secrets.token_hex(4),
@@ -441,13 +453,10 @@ class Watch:
                 "chats": chats,
                 "all": len(chats),
                 "attempts": 0,
-                "next_at": 0.0,
+                "next_at": self.data["telegram_not_before"],
                 "created": clock.now(),
             }
         )
-        while len(queue) > QUEUE_MAX:
-            dropped = queue.pop(0)
-            logger.error(f"{PREFIX} message queue full, oldest dropped: {dropped.get('kind')}")
         self.save()
 
     def warn(self, topic: str, text: str, every: float = DAY) -> bool:
@@ -492,7 +501,7 @@ class Watch:
 
     async def _deliver(self) -> None:
         queue = self.data["queue"]
-        if not queue:
+        if not queue or clock.now() < self.data["telegram_not_before"]:
             return
         bot = self._bot()
         if bot is None:
@@ -524,6 +533,7 @@ class Watch:
                     raise
                 except TelegramRetryAfter as exc:
                     wait = max(1, int(getattr(exc, "retry_after", 1) or 1))
+                    self.data["telegram_not_before"] = max(self.data["telegram_not_before"], now + wait)
                     for other in queue:
                         other["next_at"] = max(other.get("next_at", 0.0), now + wait)
                     logger.warning(f"{PREFIX} telegram asks to wait {wait} s")
@@ -836,7 +846,7 @@ class Watch:
         # Unsent reminders of a finished incident are no longer true.
         d["queue"] = [
             q for q in d["queue"]
-            if not (q.get("incident") == incident["id"] and q["kind"] == "remind" and len(q["chats"]) == q.get("all"))
+            if not (q.get("incident") == incident["id"] and q["kind"] == "remind")
         ]
         for q in d["queue"]:
             if q.get("incident") == incident["id"] and q["kind"] == "down":
