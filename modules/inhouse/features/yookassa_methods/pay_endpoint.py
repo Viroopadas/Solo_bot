@@ -113,10 +113,21 @@ def _safe_reason(exc: BaseException) -> str:
 
 
 async def _create(deps: state.Deps, claims: token.Claims, checkout_ms: int, amount: int) -> Outcome:
+    # The hourly quota belongs to the person, not to a payment method. Keep its
+    # check and committed increment together even for simultaneous SBP/card opens.
+    async with store.LOCKS.hold(("new-payment", claims.tg_id)):
+        return await _create_locked(deps, claims, checkout_ms, amount)
+
+
+async def _create_locked(deps: state.Deps, claims: token.Claims, checkout_ms: int, amount: int) -> Outcome:
     s = deps.settings
     base = {"tg_id": claims.tg_id, "method": claims.method, "checkout_ms": checkout_ms}
     async with deps.session_maker() as session:
         try:
+            # A second method may have waited for this person's creation lock.
+            checkout = await deps.read_checkout(session, claims.tg_id)
+            if checkout is None or checkout.checkout_ms != checkout_ms:
+                return Outcome("stale", reason="checkout changed while waiting", **base)
             if await store.count_recent(session, claims.tg_id) >= int(s.NEW_PAYMENTS_PER_HOUR):
                 return Outcome("limited", reason="hourly limit", **base)
             with context.method_scope(claims.method) as holder:
@@ -153,13 +164,10 @@ async def _create(deps: state.Deps, claims: token.Claims, checkout_ms: int, amou
 
 async def open_link(deps: state.Deps, raw_token: str) -> Outcome:
     s = deps.settings
-    expired = False
     try:
         claims = token.verify(deps.secret, raw_token, s.TOKEN_TTL_SECONDS)
-    except token.TokenExpiredError as exc:
-        if exc.claims is None:
-            return Outcome("stale", reason="label expired")
-        claims, expired = exc.claims, True  # genuine but old: still say "already paid" if it was
+    except token.TokenExpiredError:
+        return Outcome("stale", reason="label expired")
     except token.TokenError as exc:
         return Outcome("invalid", reason=f"label: {exc}")
 
@@ -174,9 +182,7 @@ async def open_link(deps: state.Deps, raw_token: str) -> Outcome:
                     checkout_ms=row.checkout_ms,
                     reason="link already paid",
                 )
-        checkout = None if expired else await deps.read_checkout(session, claims.tg_id)
-    if expired:
-        return Outcome("stale", tg_id=claims.tg_id, method=claims.method, reason="label expired")
+        checkout = await deps.read_checkout(session, claims.tg_id)
     if checkout is None:
         return Outcome("stale", tg_id=claims.tg_id, method=claims.method, reason="no checkout")
     checkout_ms = checkout.checkout_ms
@@ -189,6 +195,9 @@ async def open_link(deps: state.Deps, raw_token: str) -> Outcome:
 
     async with store.LOCKS.hold((claims.tg_id, checkout_ms, claims.method)):
         async with deps.session_maker() as session:
+            current_checkout = await deps.read_checkout(session, claims.tg_id)
+            if current_checkout is None or current_checkout.checkout_ms != checkout_ms:
+                return Outcome("stale", reason="checkout changed while waiting", **base)
             rows = await store.rows_for_checkout(session, claims.tg_id, checkout_ms)
             reuse = None
             for row in rows:
@@ -270,7 +279,9 @@ async def handle(request: web.Request) -> web.Response:
     except Exception as exc:
         outcome = Outcome("error", reason=f"unexpected {type(exc).__name__}", retry_token=raw)
     _log(outcome, started)
-    await _maybe_purge(deps)
+    # A forged label must not reach the database, even via maintenance work.
+    if outcome.kind != "invalid" and outcome.reason != "label expired":
+        await _maybe_purge(deps)
     if outcome.kind in ("created", "reused") and outcome.url:
         return _redirect(outcome.url)
     return pages.render(

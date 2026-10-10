@@ -151,6 +151,35 @@ async def test_broken_label_page(client, db):
     assert "Ссылка недействительна" in body and "Traceback" not in body
 
 
+async def test_forged_label_never_opens_database_even_for_purge(client):
+    """Spec 4.2/4.3: signature checks precede ALL database access."""
+    calls = []
+
+    def forbidden_database():
+        calls.append("opened")
+        raise AssertionError("unsigned request reached database")
+
+    activate(make_deps(forbidden_database, FakeStockService()))
+    resp = await post(client, "1.2.s.3.4.forged")
+    assert resp.status == 400
+    assert calls == []
+
+
+async def test_expired_label_never_opens_database(client):
+    """Spec 4.2 step 3: the expiry check, like HMAC, precedes database access."""
+    calls = []
+
+    def forbidden_database():
+        calls.append("opened")
+        raise AssertionError("expired request reached database")
+
+    activate(make_deps(forbidden_database, FakeStockService()))
+    expired = token.issue(SECRET, TG, "sbp", 1800, issued_ms=token.now_ms() - 1801000)
+    resp = await post(client, expired)
+    assert resp.status == 410
+    assert calls == []
+
+
 async def test_stale_page(client, db):
     activate(make_deps(db, FakeStockService()))
     resp = await post(client, label())

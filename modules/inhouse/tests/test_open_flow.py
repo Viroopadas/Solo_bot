@@ -146,7 +146,8 @@ async def test_paid_after_checkout_cleared_shows_paid(db, yk_api):
     assert out.kind == "paid"
 
 
-async def test_expired_label_of_paid_payment_shows_paid(db, yk_api, monkeypatch):
+async def test_expired_label_of_paid_payment_is_stale(db, yk_api, monkeypatch):
+    """Spec 4.2 step 3: expiry must be rejected before even a paid lookup."""
     svc = FakeStockService()
     deps = make_deps(db, svc)
     issued = token.now_ms() - 29 * 60 * 1000
@@ -158,7 +159,7 @@ async def test_expired_label_of_paid_payment_shows_paid(db, yk_api, monkeypatch)
     real = token.now_ms
     monkeypatch.setattr(token, "now_ms", lambda: real() + 2 * 60 * 1000)  # two minutes later: expired
     out = await pay_endpoint.open_link(deps, t)
-    assert out.kind == "paid"
+    assert out.kind == "stale"
     await set_payment_status(db, first.payment_id, "pending")
     assert (await pay_endpoint.open_link(deps, t)).kind == "stale"
 
@@ -187,15 +188,38 @@ async def test_two_concurrent_opens_one_payment(db, yk_api):
     assert len(store.LOCKS) == 0  # lock entries do not leak
 
 
-async def test_concurrent_different_methods_do_not_block_each_other(db, yk_api):
+async def test_concurrent_different_methods_complete(db, yk_api):
+    """Spec 4.3 limits creation per person; parallel methods may wait for that quota."""
     svc = FakeStockService(delay=0.2)
     deps = make_deps(db, svc)
     await save_checkout(db, TG, {"required_amount": 199}, past(1))
-    loop = asyncio.get_running_loop()
-    t0 = loop.time()
-    a, b = await asyncio.gather(pay_endpoint.open_link(deps, label("sbp")), pay_endpoint.open_link(deps, label("card")))
+    a, b = await asyncio.wait_for(
+        asyncio.gather(pay_endpoint.open_link(deps, label("sbp")), pay_endpoint.open_link(deps, label("card"))),
+        timeout=3,
+    )
     assert a.kind == b.kind == "created" and a.payment_id != b.payment_id
-    assert loop.time() - t0 < 0.39
+    assert len(store.LOCKS) == 0
+
+
+async def test_concurrent_methods_cannot_exceed_hourly_limit(db, yk_api):
+    """Spec 4.3/4.6: at most ten new invoices per person per hour."""
+    svc = FakeStockService(delay=0.1)
+    deps = make_deps(db, svc)
+    async with db() as session:
+        for i in range(9):
+            await store.insert(session, tg_id=TG, checkout_ms=i, issued_ms=i,
+                               method="sbp", payment_id=f"old-{i}",
+                               confirmation_url="https://yoomoney.ru/x", amount=1)
+        await session.commit()
+    await save_checkout(db, TG, {"required_amount": 199}, past(1))
+    results = await asyncio.wait_for(asyncio.gather(
+        pay_endpoint.open_link(deps, label("sbp")),
+        pay_endpoint.open_link(deps, label("card")),
+    ), timeout=3)
+    assert sorted(r.kind for r in results) == ["created", "limited"]
+    assert svc.calls == 1
+    assert await count_rows(db, "inhouse_yk_links") == 10
+    assert len(store.LOCKS) == 0
 
 
 async def test_hourly_limit(db, yk_api):
@@ -217,6 +241,52 @@ async def test_hourly_limit(db, yk_api):
     await save_checkout(db, TG, {"required_amount": 199}, past(1))
     out = await pay_endpoint.open_link(deps, label())
     assert out.kind == "limited" and svc.calls == 0
+
+
+@pytest.mark.parametrize("lock_kind", ["checkout", "person"])
+async def test_checkout_changed_while_waiting_never_creates_payment(db, yk_api, lock_kind):
+    """T5: a link to the previous purchase must not create an invoice."""
+    from modules.inhouse.features.yookassa_methods import compat
+
+    svc = FakeStockService()
+    deps = make_deps(db, svc)
+    saved = await save_checkout(db, TG, {"required_amount": 199}, past(1))
+    t = label()
+    read_done = asyncio.Event()
+
+    async def observed_read(session, tg_id):
+        checkout = await compat.read_checkout(session, tg_id)
+        read_done.set()
+        return checkout
+
+    deps.read_checkout = observed_read
+    key = (TG, compat.to_ms(saved), "sbp") if lock_kind == "checkout" else ("new-payment", TG)
+    async with store.LOCKS.hold(key):
+        task = asyncio.create_task(pay_endpoint.open_link(deps, t))
+        try:
+            await asyncio.wait_for(read_done.wait(), timeout=2)
+            await save_checkout(db, TG, {"required_amount": 299}, past(0))
+        except BaseException:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            raise
+    out = await asyncio.wait_for(task, timeout=3)
+    assert out.kind == "stale" and svc.calls == 0
+    assert await count_rows(db, "payments") == 0
+    assert len(store.LOCKS) == 0
+
+
+async def test_reuse_survives_process_memory_reset(db, yk_api):
+    """T4: persisted rows, not process memory, decide reuse after restart."""
+    svc = FakeStockService()
+    await save_checkout(db, TG, {"required_amount": 199}, past(1))
+    t = label()
+    first = await pay_endpoint.open_link(make_deps(db, svc), t)
+    store.LOCKS._locks.clear()
+    restarted_service = FakeStockService()
+    again = await pay_endpoint.open_link(make_deps(db, restarted_service), t)
+    assert again.kind == "reused" and again.payment_id == first.payment_id
+    assert restarted_service.calls == 0
 
 
 async def test_old_rows_purged(db):
