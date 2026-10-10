@@ -143,14 +143,14 @@ def uninstall() -> None:
 
 # ---- Shared HTTP connection to the YooKassa API --------------------------------------------
 # The SDK opens a new requests.Session for every call and closes it right after, so each
-# payment pays a fresh TLS handshake to api.yookassa.ru (~0.1 s). While the feature is on,
-# ApiClient.get_session returns one shared session whose close() does nothing, and the link
-# layer warms that connection when it shows the purchase screen, shortly before the click.
-# Retries and timeouts stay exactly as the SDK configures them.
+# payment pays a fresh TLS handshake to api.yookassa.ru (~0.1 s). Share only HTTP adapters
+# (their urllib3 connection pools), never Session state such as cookies or headers.
+# Each SDK call still gets its own Session. Its close() leaves the shared pools alive.
+# Retry settings stay as the SDK configures them; its normal requests have no timeout.
 
 PREWARM_INTERVAL_SECONDS = 40.0
 
-_session: dict[str, Any] = {"cls": None, "original": None, "shared": {}, "warmed_at": 0.0}
+_session: dict[str, Any] = {"cls": None, "original": None, "shared": {}, "warmed_at": 0.0, "warming": False}
 _session_lock = threading.Lock()
 
 
@@ -159,12 +159,21 @@ def _shared_get_session(original_func):
     def get_session(self, *args: object, **kwargs: object):
         key = (getattr(self, "max_attempts", None), getattr(self, "timeout", None))
         with _session_lock:
-            shared = _session["shared"].get(key)
-            if shared is None:
-                shared = original_func(self, *args, **kwargs)
-                shared.close = lambda: None  # the SDK closes the session after each call
-                _session["shared"][key] = shared
-        return shared
+            session = original_func(self, *args, **kwargs)
+            # A caller may already have fetched this wrapper when stop restores the SDK.
+            if _session["cls"] is None:
+                return session
+            adapters = _session["shared"].get(key)
+            if adapters is None:
+                adapters = dict(session.adapters)
+                _session["shared"][key] = adapters
+            else:
+                session.close()  # dispose of this call's unused, newly created pools
+                session.adapters.clear()
+                for prefix, adapter in adapters.items():
+                    session.mount(prefix, adapter)
+            session.close = lambda: None  # the SDK must not close another call's pools
+        return session
 
     setattr(get_session, MARK, True)
     return get_session
@@ -186,27 +195,47 @@ def uninstall_session_reuse() -> None:
     if cls is not None and original is not None:
         cls.get_session = original
     with _session_lock:
-        sessions = list(_session["shared"].values())
+        pools = list(_session["shared"].values())
         _session["shared"].clear()
-    for s in sessions:
-        try:
-            type(s).close(s)  # the real close; the instance attribute is the no-op
-        except Exception:
-            pass
-    _session["cls"] = None
-    _session["original"] = None
-    _session["warmed_at"] = 0.0
+        _session["cls"] = None
+        _session["original"] = None
+        _session["warmed_at"] = 0.0
+    for adapters in pools:
+        for adapter in set(adapters.values()):
+            try:
+                adapter.close()
+            except Exception:
+                pass
 
 
 def _prewarm_blocking() -> None:
     cls = _session["cls"]
     if cls is None:
+        with _session_lock:
+            _session["warming"] = False
         return
     try:
         client = cls()
-        client.get_session().head(client.endpoint, timeout=5, verify=client.configuration.verify)
+        session = client.get_session()
+        # Preserve normal proxy/TLS environment settings but suppress netrc authentication.
+        # An explicit empty Basic auth tuple prevents requests from consulting netrc.
+        # A prepared request avoids sending even an empty Authorization header.
+        from requests import Request
+
+        request = Request("HEAD", client.endpoint, auth=("", ""))
+        prepared = session.prepare_request(request)
+        prepared.headers.pop("Authorization", None)
+        options = session.merge_environment_settings(prepared.url, {}, None, client.configuration.verify, None)
+        try:
+            response = session.send(prepared, timeout=5, allow_redirects=False, **options)
+            response.close()
+        finally:
+            session.close()
     except Exception as exc:
         logger.debug(f"[inhouse.yk] prewarm skipped: {type(exc).__name__}")
+    finally:
+        with _session_lock:
+            _session["warming"] = False
 
 
 def prewarm() -> bool:
@@ -215,8 +244,14 @@ def prewarm() -> bool:
         return False
     now = time.monotonic()
     with _session_lock:
-        if now - _session["warmed_at"] < PREWARM_INTERVAL_SECONDS:
+        if _session["cls"] is None or _session["warming"] or now - _session["warmed_at"] < PREWARM_INTERVAL_SECONDS:
             return False
         _session["warmed_at"] = now
-    threading.Thread(target=_prewarm_blocking, name="inhouse-yk-prewarm", daemon=True).start()
+        _session["warming"] = True
+    try:
+        threading.Thread(target=_prewarm_blocking, name="inhouse-yk-prewarm", daemon=True).start()
+    except BaseException:
+        with _session_lock:
+            _session["warming"] = False
+        raise
     return True

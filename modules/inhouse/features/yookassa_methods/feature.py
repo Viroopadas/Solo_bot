@@ -14,7 +14,7 @@ Start conditions:
   or creatable, the bot object is available.
 
 Parts installed (and undone in reverse order on failure or stop):
-USE_NEW_PAYMENT_FLOW entries, button labels, SDK wrapper, shared SDK HTTP session, outgoing-request layer.
+USE_NEW_PAYMENT_FLOW entries, button labels, SDK wrapper, shared HTTP connection pools, outgoing-request layer.
 The providers hook and the web endpoint are registered by the module at import time and
 do nothing while the feature is not active.
 """

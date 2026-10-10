@@ -4,6 +4,8 @@
 	request_body /inhouse/pay {
 		max_size 2KB
 	}
+	# Override the existing site's global text/plain header after the proxy responds.
+	header /inhouse/pay >Content-Type "text/html; charset=utf-8"
 	reverse_proxy /inhouse/pay 172.18.0.1:3002 {
 		header_up Host {host}
 		header_up X-Real-IP {remote_host}

@@ -23,6 +23,8 @@ pay.omenso.net {
 			health_interval 30s
 			health_timeout 5s
 			health_status 2xx
+			# One transient probe failure must not disable our only payment upstream.
+			health_fails 3
 			transport http {
 				dial_timeout 5s
 				response_header_timeout 20s

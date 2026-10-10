@@ -162,16 +162,25 @@ def test_sdk_failure_is_not_retried(patched, monkeypatch):
 
 # ---- shared HTTP session to the YooKassa API ------------------------------------------------
 
-class _FakeSession:
+from requests import Session
+
+
+class _FakeSession(Session):
     def __init__(self):
+        super().__init__()
         self.closed = 0
         self.heads = []
+        self.auth_headers = []
 
     def close(self):
         self.closed += 1
+        super().close()
 
-    def head(self, url, **kwargs):
-        self.heads.append(url)
+    def send(self, request, **kwargs):
+        from types import SimpleNamespace
+        self.heads.append(request.url)
+        self.auth_headers.append(request.headers.get("Authorization"))
+        return SimpleNamespace(close=lambda: None)
 
 
 def _fake_client_cls():
@@ -203,20 +212,24 @@ def reuse():
     assert cls.__dict__["get_session"] is original
 
 
-def test_session_shared_and_close_is_noop(reuse):
+def test_session_isolated_adapters_shared_and_close_is_noop(reuse):
     cls, made = reuse
     a, b = cls().get_session(), cls().get_session()
-    assert a is b and len(made) == 1
+    assert a is not b and len(made) == 2
+    assert a.get_adapter("https://example.invalid") is b.get_adapter("https://example.invalid")
     a.close()  # what the SDK does after every request
     assert made[0].closed == 0
 
 
-def test_uninstall_really_closes_shared_session():
+def test_uninstall_really_closes_shared_adapters():
+    from unittest.mock import Mock
     cls, made = _fake_client_cls()
     sdk_patch.install_session_reuse(cls)
-    cls().get_session()
+    session = cls().get_session()
+    adapter = session.get_adapter("https://example.invalid")
+    adapter.close = Mock(wraps=adapter.close)
     sdk_patch.uninstall_session_reuse()
-    assert made[0].closed == 1
+    adapter.close.assert_called_once_with()
     assert cls().get_session() is not made[0]
 
 
@@ -235,7 +248,8 @@ def test_real_sdk_session_keeps_retry_adapter():
     sdk_patch.install_session_reuse(ApiClient)
     try:
         s1, s2 = ApiClient().get_session(), ApiClient().get_session()
-        assert s1 is s2
+        assert s1 is not s2
+        assert s1.get_adapter("https://api.yookassa.ru") is s2.get_adapter("https://api.yookassa.ru")
         adapter = s1.get_adapter("https://api.yookassa.ru/v3/payments")
         assert isinstance(adapter, HTTPAdapter) and adapter.max_retries.total == ApiClient().max_attempts
         s1.close()
@@ -262,7 +276,132 @@ def test_prewarm_throttled_and_heads_endpoint(reuse, monkeypatch):
     assert sdk_patch.prewarm() is False  # within the interval
     assert started == [1]
     assert made[0].heads == [cls.endpoint]
+    assert made[0].auth_headers == [None]
 
 
 def test_prewarm_noop_without_install():
     assert sdk_patch.prewarm() is False
+
+
+def test_slow_prewarm_never_starts_second_thread(reuse, monkeypatch):
+    started = []
+
+    class HeldThread:
+        def __init__(self, target, **kwargs):
+            self.target = target
+
+        def start(self):
+            started.append(self.target)
+
+    monkeypatch.setattr(sdk_patch.threading, "Thread", HeldThread)
+    monkeypatch.setattr(sdk_patch.time, "monotonic", lambda: 1000)
+    assert sdk_patch.prewarm() is True
+    monkeypatch.setattr(sdk_patch.time, "monotonic", lambda: 1100)
+    try:
+        assert sdk_patch.prewarm() is False
+        assert len(started) == 1
+    finally:
+        started[0]()
+
+
+def test_prewarm_does_not_use_netrc_credentials(reuse, monkeypatch):
+    import requests.sessions
+    monkeypatch.setattr(requests.sessions, "get_netrc_auth", lambda url: pytest.fail("prewarm read netrc"))
+    sdk_patch._prewarm_blocking()
+
+
+def test_prewarm_thread_finishes_and_cannot_overlap(reuse, monkeypatch):
+    import threading
+    entered, release = threading.Event(), threading.Event()
+    threads = []
+    original_thread = threading.Thread
+    original_send = _FakeSession.send
+
+    class RecordingThread(original_thread):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            threads.append(self)
+
+    def held_send(self, request, **kwargs):
+        entered.set()
+        assert release.wait(timeout=2)
+        return original_send(self, request, **kwargs)
+
+    monkeypatch.setattr(sdk_patch.threading, "Thread", RecordingThread)
+    monkeypatch.setattr(sdk_patch, "PREWARM_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(_FakeSession, "send", held_send)
+    try:
+        assert sdk_patch.prewarm()
+        assert entered.wait(timeout=2)
+        assert not sdk_patch.prewarm()
+        assert len(threads) == 1
+    finally:
+        release.set()
+        for thread in threads:
+            thread.join(timeout=2)
+            assert not thread.is_alive()
+    assert not sdk_patch._session["warming"]
+
+
+def test_sdk_workers_do_not_share_response_cookies():
+    """Owner's thread-safety check: retain the SDK's per-call cookie isolation."""
+    from concurrent.futures import ThreadPoolExecutor
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    from yookassa import Configuration
+    from yookassa.client import ApiClient
+
+    ports = []
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self):
+            ports.append(self.client_address[1])
+            body = self.headers.get("Cookie", "").encode()
+            self.send_response(200)
+            if self.path == "/first":
+                self.send_header("Set-Cookie", "private=first-call; Path=/")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    Configuration.configure("100500", "test_not_a_real_key")
+    sdk_patch.install_session_reuse(ApiClient)
+    address = f"http://127.0.0.1:{server.server_port}"
+    first_received, second_finished = threading.Event(), threading.Event()
+
+    def call(path):
+        session = ApiClient().get_session()
+        try:
+            if path == "/second":
+                assert first_received.wait(timeout=2)
+            result = session.get(address + path, timeout=2).text
+            if path == "/first":
+                first_received.set()
+                assert second_finished.wait(timeout=2)
+            return result
+        finally:
+            session.close()
+            if path == "/second":
+                second_finished.set()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            first = workers.submit(call, "/first")
+            second = workers.submit(call, "/second")
+            assert second.result(timeout=3) == ""
+            assert first.result(timeout=3) == ""
+        assert len(ports) == 2 and ports[0] == ports[1]  # real connection reused across workers
+    finally:
+        sdk_patch.uninstall_session_reuse()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+        assert not thread.is_alive()
