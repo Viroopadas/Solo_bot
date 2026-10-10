@@ -236,6 +236,18 @@ def classify_error(exc: BaseException) -> str:
     return "server"
 
 
+async def read_limited(content, limit: int = READ_LIMIT) -> bytes:
+    """Body up to `limit` bytes. StreamReader.read(n) returns whatever has arrived so far,
+    so one call can stop at the first network chunk (the page check then misses pay.js)."""
+    data = b""
+    while len(data) < limit:
+        chunk = await content.read(limit - len(data))
+        if not chunk:
+            break
+        data += chunk
+    return data
+
+
 async def make_requester(timeout: float):
     """(request, close): one aiohttp session per round, no redirects, at most READ_LIMIT read."""
     import aiohttp
@@ -249,7 +261,7 @@ async def make_requester(timeout: float):
     async def request(method: str, url: str, data: bytes | None = None) -> tuple[int, bytes]:
         headers = {"Content-Type": "application/x-www-form-urlencoded"} if data is not None else None
         async with session.request(method, url, data=data, headers=headers, allow_redirects=False) as resp:
-            return resp.status, await resp.content.read(READ_LIMIT)
+            return resp.status, await read_limited(resp.content)
 
     return request, session.close
 

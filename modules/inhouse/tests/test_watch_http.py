@@ -259,3 +259,26 @@ async def test_damaged_state_file_does_not_block_start(started, logs):
     path.write_bytes(b"\x00garbage")
     assert await feature.start(started.bot)
     assert menu_mode.current() == menu_mode.LINKS and "damaged" in logs.text()
+
+
+async def test_requester_reads_page_split_into_network_chunks():
+    """Live 10.10: rounds failed now and then with "page" because read(n) stops at the first chunk."""
+    async def page(request):
+        resp = web.StreamResponse()
+        await resp.prepare(request)
+        await resp.write(b'<input type="hidden" value="/p/probe-x">')
+        await asyncio.sleep(0.05)
+        await resp.write(b'<script src="/static/pay.js"></script>')
+        await resp.write_eof()
+        return resp
+
+    app = web.Application()
+    app.router.add_get("/p/probe-x", page)
+    async with TestServer(app) as server:
+        request, close = await watch.make_requester(5)
+        try:
+            status, body = await request("GET", str(server.make_url("/p/probe-x")))
+        finally:
+            await close()
+    assert status == 200
+    assert b'value="/p/probe-x"' in body and b"/static/pay.js" in body
