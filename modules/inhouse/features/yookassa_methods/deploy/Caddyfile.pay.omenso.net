@@ -1,0 +1,58 @@
+# Site block for the Russian server test-bg-ru1 (93.189.229.168), /etc/caddy/Caddyfile, Caddy 2.11.
+# Append this block; do not touch other sites. Static files live in /var/www/pay-omenso:
+#   index.html, unavailable.html, static/pay.js, static/pay.css   (from deploy/ of the feature)
+#
+# GET  /p/<label>     -> index.html with the label in a hidden field (templates); pay.js posts it
+# POST /inhouse/pay   -> forwarded to the bot through its domain, certificate verified normally
+# bot not answering   -> unavailable.html ("Оплата временно недоступна ...")
+pay.omenso.net {
+	header -Server
+
+	@pay path /inhouse/pay
+	handle @pay {
+		@notpost not method POST
+		respond @notpost 405
+		request_body {
+			max_size 2KB
+		}
+		reverse_proxy https://store.potok-lubvi.ru {
+			header_up Host {upstream_hostport}
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 20s
+			}
+		}
+	}
+
+	handle /p/* {
+		root * /var/www/pay-omenso
+		rewrite * /index.html
+		templates
+		file_server
+		header Cache-Control "no-store"
+		header Referrer-Policy "no-referrer"
+		header X-Frame-Options "DENY"
+		header X-Content-Type-Options "nosniff"
+		# form-action must list YooKassa: browsers apply it to the redirect after the form post.
+		header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; form-action 'self' https://yoomoney.ru https://*.yoomoney.ru https://yookassa.ru https://*.yookassa.ru; frame-ancestors 'none'; base-uri 'none'"
+	}
+
+	handle /static/* {
+		root * /var/www/pay-omenso
+		file_server
+		header Cache-Control "public, max-age=300"
+		header X-Content-Type-Options "nosniff"
+	}
+
+	handle {
+		respond 404
+	}
+
+	handle_errors {
+		root * /var/www/pay-omenso
+		rewrite * /unavailable.html
+		file_server
+		header Cache-Control "no-store"
+		header Content-Security-Policy "default-src 'none'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+	}
+}

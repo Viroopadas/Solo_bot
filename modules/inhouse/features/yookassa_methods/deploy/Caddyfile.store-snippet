@@ -1,0 +1,12 @@
+# Lines for the bot server solobot-remnawave, /opt/remnawave/caddy/Caddyfile (Caddy 2.9.1),
+# inside the existing site block store.potok-lubvi.ru, next to the /p2pguard2/hook lines.
+# Only POST /inhouse/pay reaches the bot's web server (module webhooks are POST-only).
+	request_body /inhouse/pay {
+		max_size 2KB
+	}
+	reverse_proxy /inhouse/pay 172.18.0.1:3002 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}

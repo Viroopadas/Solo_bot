@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex,nofollow">
+<title>Переход к оплате</title>
+<link rel="stylesheet" href="/static/pay.css">
+</head>
+<body>
+<main>
+  <!-- Caddy "templates" puts the page path (/p/<label>) into the hidden field, so the
+       button works without JavaScript. pay.js fills it from the address if templates
+       did not run, and submits the form at once. -->
+  <form id="pay" method="post" action="/inhouse/pay">
+    <input type="hidden" id="t" name="t" value="{{html .OriginalReq.URL.Path}}">
+    <p>Открываем страницу оплаты…</p>
+    <button type="submit">Перейти к оплате</button>
+  </form>
+</main>
+<script src="/static/pay.js"></script>
+</body>
+</html>
