@@ -730,6 +730,25 @@ def test_wrong_shapes_are_damage():
     assert watch.validate({"schema": 1, "mode": "fallback"})["mode"] == "links"  # no incident -> links
 
 
+@pytest.mark.parametrize("field,value", [
+    ("a", {"state": "OK", "fails": "broken"}),
+    ("observers", {"br-tw-ru1": {"at": "broken"}}),
+    ("queue", [{"text": "alert", "chats": [ADMIN]}]),
+    ("entries", [{}]),
+    ("hold_until", float("nan")),
+    ("warned", {"static": "broken"}),
+], ids=["a-counter", "observer", "queue", "entries", "nan", "warned"])
+def test_nested_damaged_state_is_rejected_before_restore(field, value, logs):
+    """Architecture 3.8: damaged state must start fresh, not break the running watch."""
+    path = yk_settings.WATCH_STATE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = watch.fresh()
+    data[field] = value
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert watch.WATCH.restore_mode() == menu_mode.LINKS
+    assert watch.WATCH.corrupted and "damaged" in logs.text()
+
+
 # --- observer signals (4.3) ----------------------------------------------------------------
 
 

@@ -25,6 +25,7 @@ import contextlib
 import hashlib
 import hmac
 import json
+import math
 import os
 import random
 import re
@@ -143,7 +144,7 @@ def fresh() -> dict:
 
 def validate(data) -> dict:
     """Saved state merged over defaults; raises ValueError when the shape is wrong."""
-    if not isinstance(data, dict) or data.get("schema") != SCHEMA:
+    if not isinstance(data, dict) or type(data.get("schema")) is not int or data.get("schema") != SCHEMA:
         raise ValueError("schema")
     out = fresh()
     for key, default in out.items():
@@ -163,8 +164,49 @@ def validate(data) -> dict:
         raise ValueError("mode")
     if out["a"].get("state") not in (OK, SUSPECT, DOWN):
         raise ValueError("a.state")
+    def number(value):
+        return type(value) in (int, float) and math.isfinite(value) and value >= 0
+
+    def counter(value):
+        return type(value) is int and value >= 0
+
+    for key in ("hold_until", "daily_last"):
+        if not number(out[key]):
+            raise ValueError(key)
+    a = {**fresh()["a"], **out["a"]}
+    if not all(counter(a[k]) for k in ("fails", "oks")) or not number(a["last_round"]) or not isinstance(a["reason"], str):
+        raise ValueError("a")
+    out["a"] = a
+    if not all(number(t) for t in out["entries"]):
+        raise ValueError("entries")
+    if not all(isinstance(k, str) and number(v) for k, v in out["warned"].items()):
+        raise ValueError("warned")
+    if not all(isinstance(k, str) and counter(v) for k, v in out["expiry_fails"].items()):
+        raise ValueError("expiry_fails")
+    incident = out["incident"]
+    if incident is not None and not (
+        isinstance(incident.get("id"), str) and number(incident.get("since"))
+        and incident.get("source") in ("a", "b") and isinstance(incident.get("reason"), str)
+        and (incident.get("last_remind") is None or number(incident["last_remind"]))
+    ):
+        raise ValueError("incident")
+    for name, observer in out["observers"].items():
+        if not (
+            isinstance(name, str) and SIGNAL_FORMATS["observer"].fullmatch(name)
+            and isinstance(observer, dict) and counter(observer.get("seq"))
+            and number(observer.get("ts")) and number(observer.get("at"))
+            and observer.get("state") in ("ok", "down") and observer.get("reason") in SIGNAL_REASONS
+        ):
+            raise ValueError("observers")
     for item in out["queue"]:
         if not (isinstance(item, dict) and isinstance(item.get("text"), str) and isinstance(item.get("chats"), list)):
+            raise ValueError("queue")
+        if not (
+            item.get("kind") in ("down", "up", "summary", "remind", "warn", "info")
+            and all(type(chat) is int and chat != 0 for chat in item["chats"])
+            and counter(item.get("attempts", 0)) and number(item.get("next_at", 0.0))
+            and counter(item.get("all", len(item["chats"])))
+        ):
             raise ValueError("queue")
     if out["mode"] == menu_mode.FALLBACK and out["incident"] is None:
         out["mode"] = menu_mode.LINKS
