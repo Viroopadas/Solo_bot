@@ -211,6 +211,15 @@ def test_subprocess_nonzero_stderr_is_checked(monkeypatch):
         inst.run(["fixture"])
 
 
-def test_shell_quoting_uses_posix_directory_on_windows():
-    from pathlib import PurePosixPath
-    assert str(PurePosixPath("/srv/pay page/static/pay.js").parent) == "/srv/pay page/static"
+def test_page_directory_quoting_on_installer_path(monkeypatch):
+    """Owner mandate: Windows operator must send valid quoted POSIX paths."""
+    commands = []
+    def fake(host, command, **kwargs):
+        commands.append(command)
+        return ""
+    monkeypatch.setattr(inst, "ssh", fake)
+    c = inst.Ctx(inst.parse(["install", "--web-root", "/srv/pay page",
+                             "--bot-link", "https://t.me/example_bot"]), True)
+    inst.step_pages(c)
+    assert any("mkdir -p '/srv/pay page/static'" in command for command in commands)
+    assert not any("\\" in command for command in commands)
