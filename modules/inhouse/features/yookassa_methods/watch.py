@@ -62,6 +62,7 @@ NOT_STARTED_WARN_AFTER = 600
 CREATE_WINDOW = 600
 CREATE_ERRORS = 3
 STATIC_EVERY = 3600
+DELIVERY_TIMEOUT = 20
 DEPLOY_STATIC = Path(__file__).resolve().parent / "deploy" / "static"
 STATIC_FILES = ("pay.js", "pay.css")
 
@@ -267,6 +268,7 @@ class Watch:
         self.no_bot_logged = False
         self.probe_count = 0
         self._lock: asyncio.Lock | None = None
+        self._maintenance_task: asyncio.Task | None = None
 
     # --- state file -----------------------------------------------------------------------
 
@@ -426,6 +428,27 @@ class Watch:
         return self.bot
 
     async def deliver(self) -> None:
+        if not owner_allows() or not self.data["queue"]:
+            return
+        # The entire batch, not each recipient, has the alert delivery budget of section 3.4.
+        budget = DELIVERY_TIMEOUT
+        if self.next_round_at > clock.now():
+            budget = min(budget, max(0.1, self.next_round_at - clock.now()))
+        try:
+            async with asyncio.timeout(budget):
+                await self._deliver()
+        except TimeoutError:
+            now = clock.now()
+            for item in self.data["queue"]:
+                if item.get("next_at", 0.0) <= now:
+                    item["attempts"] = int(item.get("attempts", 0)) + 1
+                    step = RETRY_STEPS[min(item["attempts"], len(RETRY_STEPS)) - 1]
+                    item["next_at"] = now + step
+            logger.warning(f"{PREFIX} delivery time budget reached, pending messages retained")
+        finally:
+            self.save()
+
+    async def _deliver(self) -> None:
         queue = self.data["queue"]
         if not queue:
             return
@@ -444,6 +467,8 @@ class Watch:
             if item.get("next_at", 0.0) > now:
                 continue
             for chat in list(item["chats"]):
+                if not owner_allows():
+                    return
                 try:
                     kwargs = {"chat_id": chat, "text": item["text"], "parse_mode": None}
                     if LinkPreviewOptions is not None:
@@ -582,13 +607,33 @@ class Watch:
         request, close = await make_requester(float(s.WATCH_REQUEST_TIMEOUT))
         try:
             ok, code = await run_round(request)
-            if clock.now() >= self.next_static_at:
-                self.next_static_at = clock.now() + STATIC_EVERY
-                await self.check_static(request)
         finally:
             with contextlib.suppress(Exception):
                 await close()
         self.apply_round(ok, code)
+
+    async def maintenance(self) -> None:
+        """Hourly/daily network work cannot delay rounds, switching or alert delivery (T2)."""
+        try:
+            if owner_allows() and state.current() is not None and clock.now() >= self.next_static_at:
+                self.next_static_at = clock.now() + STATIC_EVERY
+                request, close = await make_requester(float(feature_settings.WATCH_REQUEST_TIMEOUT))
+                try:
+                    await self.check_static(request)
+                finally:
+                    await close()
+            if owner_allows() and clock.now() - float(self.data.get("daily_last") or 0.0) >= DAY:
+                await self.daily()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(f"{PREFIX} maintenance failed: {type(exc).__name__}")
+
+    async def stop_maintenance(self) -> None:
+        task, self._maintenance_task = self._maintenance_task, None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     def apply_round(self, ok: bool, code: str) -> None:
         s = feature_settings
@@ -652,7 +697,7 @@ class Watch:
     async def switch(self, mode: str) -> bool:
         """The only mode transition: under a lock, owner's permission checked again."""
         async with self._lock_obj():
-            if mode == menu_mode.FALLBACK and not owner_allows():
+            if not owner_allows():
                 return False
             changed = menu_mode.set_mode(mode)
             self.data["mode"] = mode
@@ -799,6 +844,8 @@ class Watch:
         self.save()
         timeout = float(s.WATCH_REQUEST_TIMEOUT)
         for name, server in dict(s.WATCH_CERT_HOSTS).items():
+            if not owner_allows():
+                return
             key = f"cert:{name}"
             try:
                 days = await expiry.cert_days(name, timeout)
@@ -818,6 +865,8 @@ class Watch:
                 )
                 self.warn(key, text)
         for name in tuple(s.WATCH_DOMAINS):
+            if not owner_allows():
+                return
             key = f"domain:{name}"
             try:
                 days = await expiry.domain_days(name, timeout)
@@ -837,18 +886,27 @@ class Watch:
     async def tick(self) -> None:
         now = clock.now()
         if not owner_allows():
+            await self.stop_maintenance()
             return  # T9: the owner turned the feature off - silence, no switching
         if state.current() is not None:
             self.not_ready_since = None
             if now >= self.next_round_at:
                 await self.do_round()
+            if not owner_allows():
+                await self.stop_maintenance()
+                return
             await self.evaluate()
         elif not state.STATE.starting:
             self.check_not_started(now)
         self.check_observer_silence(clock.now())
-        if clock.now() - float(self.data.get("daily_last") or 0.0) >= DAY:
-            await self.daily()
         await self.deliver()
+        if not owner_allows():
+            return
+        due = (state.current() is not None and clock.now() >= self.next_static_at) or (
+            clock.now() - float(self.data.get("daily_last") or 0.0) >= DAY
+        )
+        if due and (self._maintenance_task is None or self._maintenance_task.done()):
+            self._maintenance_task = asyncio.create_task(self.maintenance())
 
 
 WATCH = Watch()
@@ -921,14 +979,17 @@ async def run(bot=None) -> None:
         return
     w = WATCH
     w.start(bot)
-    while True:
-        try:
-            await w.tick()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # a failed step must not stop the watch
-            logger.error(f"{PREFIX} step failed: {type(exc).__name__}")
-        await clock.sleep(TICK_SECONDS)
+    try:
+        while True:
+            try:
+                await w.tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # a failed step must not stop the watch
+                logger.error(f"{PREFIX} step failed: {type(exc).__name__}")
+            await clock.sleep(TICK_SECONDS)
+    finally:
+        await w.stop_maintenance()
 
 
 async def supervise(bot=None) -> None:

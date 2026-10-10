@@ -186,7 +186,9 @@ async def test_round_through_do_round_and_hourly_static(env, monkeypatch):
         return req, _noop
 
     monkeypatch.setattr(watch, "make_requester", make)
+    env.w.data["daily_last"] = env.clock.t
     await env.w.do_round()
+    await env.w.maintenance()
     assert env.w.data["a"]["fails"] == 0 and env.w.data["a"]["oks"] == 1
     assert sum(1 for c in req.calls if "/static/" in c[1]) == 2
     queued = [q["text"] for q in env.w.data["queue"]]
@@ -195,11 +197,137 @@ async def test_round_through_do_round_and_hourly_static(env, monkeypatch):
     assert "pay.js" not in queued[0]
     env.clock.t += 130
     await env.w.do_round()  # not again within the hour
+    await env.w.maintenance()
     assert sum(1 for c in req.calls if "/static/" in c[1]) == 2
 
 
 async def _noop():
     return None
+
+
+async def test_daily_check_cannot_delay_outage_alert(env, monkeypatch):
+    """Architecture T2, 3.4/3.5: alert path must not wait for certificate/whois checks."""
+    env.w.data["a"].update(state=watch.SUSPECT, fails=2)
+    env.w.next_static_at = env.clock.t + 3600
+
+    async def request(method, url, data=None):
+        if method == "GET":
+            return 200, page(url.split("pay.omenso.net", 1)[1])
+        return 502, b"Bad Gateway"
+
+    async def make(timeout):
+        return request, _noop
+
+    async def blocked_daily():
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(watch, "make_requester", make)
+    monkeypatch.setattr(env.w, "daily", blocked_daily)
+    try:
+        await asyncio.wait_for(env.w.tick(), 0.3)
+        assert menu_mode.current() == menu_mode.FALLBACK
+        assert len(env.bot.sent) == 1 and env.bot.sent[0]["text"].startswith("🔴")
+    finally:
+        task = getattr(env.w, "_maintenance_task", None)
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_owner_disable_during_round_prevents_alert_and_switch(env, monkeypatch):
+    """Architecture T9 and 3.1: owner's disable is rechecked after network awaits."""
+    env.w.data["a"].update(state=watch.SUSPECT, fails=2)
+    env.w.next_static_at = env.clock.t + 3600
+    env.w.data["daily_last"] = env.clock.t
+
+    async def request(method, url, data=None):
+        if method == "GET":
+            return 200, page(url.split("pay.omenso.net", 1)[1])
+        monkeypatch.setitem(module_settings.FEATURES, "yookassa_methods", False)
+        return 502, b"Bad Gateway"
+
+    async def make(timeout):
+        return request, _noop
+
+    monkeypatch.setattr(watch, "make_requester", make)
+    await env.w.tick()
+    assert menu_mode.current() == menu_mode.LINKS
+    assert env.w.data["incident"] is None and env.bot.sent == []
+
+
+async def test_alert_deadline_with_slow_rounds_and_maintenance(env, monkeypatch):
+    """Architecture T2: measured through tick/do_round/evaluate/deliver, maximum 300 s."""
+    started = env.clock.t
+    env.w.next_round_at = started + 130  # maximum healthy interval including jitter
+    env.w.next_static_at = started + 3600
+
+    async def request(method, url, data=None):
+        env.clock.t += 10  # each request consumes the full configured budget
+        if method == "GET":
+            return 200, page(url.split("pay.omenso.net", 1)[1])
+        return 502, b"Bad Gateway"
+
+    async def make(timeout):
+        return request, _noop
+
+    async def blocked_daily():
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(watch, "make_requester", make)
+    monkeypatch.setattr(env.w, "daily", blocked_daily)
+    try:
+        for _ in range(61):
+            await env.w.tick()
+            if env.bot.sent:
+                break
+            env.clock.t += 5
+            await asyncio.sleep(0)
+        assert env.bot.sent and env.clock.t - started <= 300
+        assert menu_mode.current() == menu_mode.FALLBACK
+    finally:
+        await env.w.stop_maintenance()
+        assert env.w._maintenance_task is None
+
+
+async def test_delivery_budget_preserves_queue_and_cancels_send(env, monkeypatch):
+    """Architecture 3.4/3.5: bounded delivery, retained message after timeout."""
+    cancelled = asyncio.Event()
+
+    async def send(**kwargs):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(env.bot, "send_message", send)
+    monkeypatch.setattr(watch, "DELIVERY_TIMEOUT", 0.03)
+    env.w.enqueue("warn", "test")
+    await asyncio.wait_for(env.w.deliver(), 0.3)
+    assert cancelled.is_set()
+    assert len(env.w.data["queue"]) == 1
+    assert env.w.data["queue"][0]["next_at"] == env.clock.t + 60
+
+
+async def test_run_cancellation_stops_maintenance(env, monkeypatch):
+    """Architecture 3.9: all watch-owned tasks finish at shutdown."""
+    started, stopped = asyncio.Event(), asyncio.Event()
+    env.w.next_round_at = env.clock.t + 3600
+    env.w.next_static_at = env.clock.t + 3600
+
+    async def daily():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(env.w, "daily", daily)
+    task = asyncio.create_task(watch.run(env.bot))
+    await asyncio.wait_for(started.wait(), 0.3)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 0.3)
+    assert task.done() and stopped.is_set() and env.w._maintenance_task is None
 
 
 # --- states and transitions (3.4) ----------------------------------------------------------
