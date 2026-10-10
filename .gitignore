@@ -60,6 +60,11 @@ setup.py
 modules/*
 !modules/polls/
 !modules/polls/**
+!modules/inhouse/
+!modules/inhouse/**
+modules/inhouse/**/__pycache__/
+modules/inhouse/**/*.py[cod]
+modules/inhouse/**/*.secret
 storage/
 
 .license_state
